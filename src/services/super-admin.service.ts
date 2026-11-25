@@ -61,6 +61,11 @@ export const superAdminService = {
     return res.data;
   },
 
+  async deleteSchool(id: string) {
+    const res = await apiClient.delete(`/super-admin/schools/${id}`);
+    return res.data;
+  },
+
   // 3. Plans & Subscriptions
   async listPlans() {
     const res = await apiClient.get('/super-admin/plans');

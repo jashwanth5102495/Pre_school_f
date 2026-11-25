@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { superAdminService } from '../../services/super-admin.service';
 import { hierarchyService } from '../../services/hierarchy.service';
 import { HierarchyTreeGraph } from '../../components/hierarchy/HierarchyTreeGraph';
@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   Network,
   Info,
+  Trash2,
 } from 'lucide-react';
 
 interface SchoolRightPanelProps {
@@ -59,6 +60,23 @@ export const SchoolRightPanel: React.FC<SchoolRightPanelProps> = ({
     queryFn: () => hierarchyService.getTree(schoolId),
     enabled: !!schoolId,
   });
+
+  const queryClient = useQueryClient();
+
+  const handleDeleteSchool = async () => {
+    if (!confirm(`Are you sure you want to permanently delete "${school?.name || 'this school'}"? All students, teachers, classes, and records will be deleted.`)) return;
+    setIsProcessing(true);
+    try {
+      await superAdminService.deleteSchool(schoolId);
+      queryClient.invalidateQueries({ queryKey: ['schoolsList'] });
+      onUpdate();
+      onClose();
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || err.message || 'Failed to delete school');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   const handleStatusChange = async (newStatus: string) => {
     setIsProcessing(true);
@@ -125,6 +143,15 @@ export const SchoolRightPanel: React.FC<SchoolRightPanelProps> = ({
           <Badge variant={school?.status === 'ACTIVE' ? 'success' : 'neutral'}>
             {school?.status}
           </Badge>
+          <button
+            type="button"
+            onClick={handleDeleteSchool}
+            disabled={isProcessing}
+            className="p-1.5 rounded-lg text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 transition-colors"
+            title="Permanently Delete School"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
           <button
             type="button"
             onClick={onClose}
@@ -301,6 +328,16 @@ export const SchoolRightPanel: React.FC<SchoolRightPanelProps> = ({
                   Activate School
                 </Button>
               )}
+
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isProcessing}
+                onClick={handleDeleteSchool}
+                className="text-xs text-red-600 border-red-200 hover:bg-red-50 dark:hover:bg-red-950/40"
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-1" /> Delete School
+              </Button>
             </div>
           </div>
         )}

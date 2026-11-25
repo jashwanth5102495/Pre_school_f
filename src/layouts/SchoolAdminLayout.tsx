@@ -16,6 +16,7 @@ import {
   Menu,
   X,
   Network,
+  BookOpen,
 } from 'lucide-react';
 
 export const SchoolAdminLayout: React.FC = () => {
@@ -35,6 +36,7 @@ export const SchoolAdminLayout: React.FC = () => {
     { label: 'Students', path: '/school-admin/students', icon: GraduationCap },
     { label: 'Staff & Teachers', path: '/school-admin/staff', icon: Users },
     { label: 'Classes & Sections', path: '/school-admin/classes', icon: Layers },
+    { label: 'Faculty Allocations', path: '/school-admin/allocations', icon: BookOpen },
     { label: 'Fee Management', path: '/school-admin/fees', icon: CreditCard },
     { label: 'Attendance', path: '/school-admin/attendance', icon: CalendarCheck },
     { label: 'School Profile', path: '/school-admin/profile', icon: Settings },

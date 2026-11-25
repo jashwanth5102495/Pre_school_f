@@ -131,7 +131,8 @@ export const AppRoutes: React.FC = () => {
         <Route path="tree" element={<OrganizationTreePage />} />
         <Route path="students" element={<SchoolStudentsPage />} />
         <Route path="staff" element={<SchoolStaffPage />} />
-        <Route path="classes" element={<SchoolClassesPage />} />
+        <Route path="classes" element={<HeadMasterClassesPage />} />
+        <Route path="allocations" element={<TeacherAllocationsPage />} />
         <Route path="fees" element={<SchoolFeesOverviewPage />} />
         <Route path="attendance" element={<SchoolAttendanceOverviewPage />} />
         <Route path="profile" element={<SchoolProfilePage />} />
@@ -170,6 +171,8 @@ export const AppRoutes: React.FC = () => {
         <Route path="dashboard" element={<OfficeDashboardPage />} />
         <Route path="tree" element={<OrganizationTreePage />} />
         <Route path="admissions" element={<AdmissionsWorkflowPage />} />
+        <Route path="classes" element={<HeadMasterClassesPage />} />
+        <Route path="allocations" element={<TeacherAllocationsPage />} />
         <Route path="fees" element={<FeeCollectionPage />} />
         <Route path="fee-structures" element={<FeeStructuresPage />} />
         <Route path="documents" element={<DocumentsRepositoryPage />} />

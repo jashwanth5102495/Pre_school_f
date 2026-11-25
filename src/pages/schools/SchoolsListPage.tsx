@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { superAdminService } from '../../services/super-admin.service';
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '../../components/ui/Table';
 import { Badge } from '../../components/ui/Badge';
@@ -23,15 +23,34 @@ import {
   ChevronRight,
   Network,
   X,
+  Trash2,
 } from 'lucide-react';
 
 export const SchoolsListPage: React.FC = () => {
+  const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<string>('');
   const [planId, setPlanId] = useState<string>('');
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [selectedSchoolId, setSelectedSchoolId] = useState<string | null>(null);
+
+  const deleteSchoolMutation = useMutation({
+    mutationFn: (id: string) => superAdminService.deleteSchool(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['schoolsList'] });
+      if (selectedSchoolId) setSelectedSchoolId(null);
+    },
+    onError: (err: any) => {
+      alert(err.response?.data?.error?.message || err.message || 'Failed to delete school');
+    },
+  });
+
+  const handleDeleteSchool = (id: string, name: string) => {
+    if (confirm(`Are you sure you want to permanently delete "${name}" and all associated student, teacher, and school data? This action cannot be undone.`)) {
+      deleteSchoolMutation.mutate(id);
+    }
+  };
 
   const { data: plans = [] } = useQuery({
     queryKey: ['availablePlans'],
@@ -255,18 +274,32 @@ export const SchoolsListPage: React.FC = () => {
                         </TableCell>
 
                         <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            variant={isSelected ? 'primary' : 'outline'}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setSelectedSchoolId(school.id);
-                            }}
-                            className={isSelected ? 'bg-[#eb4438] text-white text-xs h-7.5 px-2' : 'text-xs h-7.5 px-2'}
-                          >
-                            <Network className="w-3.5 h-3.5 mr-1" />
-                            {isSelected ? 'Selected' : 'Tree'}
-                          </Button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              size="sm"
+                              variant={isSelected ? 'primary' : 'outline'}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedSchoolId(school.id);
+                              }}
+                              className={isSelected ? 'bg-[#eb4438] text-white text-xs h-7.5 px-2' : 'text-xs h-7.5 px-2'}
+                            >
+                              <Network className="w-3.5 h-3.5 mr-1" />
+                              {isSelected ? 'Selected' : 'Tree'}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteSchool(school.id, school.name);
+                              }}
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/40 text-xs h-7.5 px-2"
+                              title="Delete School"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );

@@ -15,6 +15,8 @@ import {
   Menu,
   X,
   Network,
+  Layers,
+  BookOpen,
 } from 'lucide-react';
 
 export const OfficeAdminLayout: React.FC = () => {
@@ -32,6 +34,8 @@ export const OfficeAdminLayout: React.FC = () => {
     { label: 'Office Dashboard', path: '/office-admin/dashboard', icon: LayoutDashboard },
     { label: 'Hierarchy Tree', path: '/office-admin/tree', icon: Network },
     { label: 'Admissions Workflow', path: '/office-admin/admissions', icon: UserPlus },
+    { label: 'Classes & Sections', path: '/office-admin/classes', icon: Layers },
+    { label: 'Faculty Allocations', path: '/office-admin/allocations', icon: BookOpen },
     { label: 'Fee Collection', path: '/office-admin/fees', icon: CreditCard },
     { label: 'Fee Structures', path: '/office-admin/fee-structures', icon: FileSpreadsheet },
     { label: 'Student Documents', path: '/office-admin/documents', icon: Files },
