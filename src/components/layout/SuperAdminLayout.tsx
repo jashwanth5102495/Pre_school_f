@@ -7,7 +7,7 @@ import { CheckCircle2 } from 'lucide-react';
 
 export const SuperAdminLayout: React.FC = () => {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Hook into live Socket.IO events
   useSocket((event, payload) => {
@@ -27,11 +27,14 @@ export const SuperAdminLayout: React.FC = () => {
   });
 
   return (
-    <div className="flex min-h-screen bg-[#f8fafc] dark:bg-[#212121] transition-colors duration-200">
-      <Sidebar isMobileOpen={isMobileMenuOpen} onClose={() => setIsMobileMenuOpen(false)} />
-      <div className="flex-1 flex flex-col min-w-0 w-full overflow-hidden">
-        <Header onOpenMobileMenu={() => setIsMobileMenuOpen(true)} />
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto overflow-y-auto">
+    <div className="flex h-screen w-screen overflow-hidden bg-[#1e1e1e] dark:bg-[#1e1e1e] transition-colors duration-200">
+      {/* Sidebar: collapsed (icon-only) or expanded */}
+      <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((v) => !v)} />
+
+      {/* Main area */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <Header />
+        <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 bg-[#f8fafc] dark:bg-[#212121]">
           <Outlet />
         </main>
       </div>

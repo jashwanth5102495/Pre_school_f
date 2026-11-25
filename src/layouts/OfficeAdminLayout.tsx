@@ -219,7 +219,7 @@ export const OfficeAdminLayout: React.FC = () => {
         </header>
 
         {/* Scrollable Page Body */}
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto overflow-y-auto">
+        <main className="flex-1 p-4 sm:p-6 overflow-y-auto">
           <Outlet />
         </main>
       </div>
@@ -228,3 +228,4 @@ export const OfficeAdminLayout: React.FC = () => {
 };
 
 export default OfficeAdminLayout;
+

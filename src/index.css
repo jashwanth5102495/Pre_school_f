@@ -42,8 +42,15 @@
 }
 
 @layer base {
+  html, body, #root {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+  }
   body {
     @apply bg-[#f8fafc] text-slate-800 antialiased font-sans transition-colors duration-200;
+    margin: 0;
+    padding: 0;
   }
   .dark body, body.dark {
     background-color: #212121;
