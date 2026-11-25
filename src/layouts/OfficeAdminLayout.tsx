@@ -17,6 +17,7 @@ import {
   Network,
   Layers,
   BookOpen,
+  Users,
 } from 'lucide-react';
 
 export const OfficeAdminLayout: React.FC = () => {
@@ -33,6 +34,7 @@ export const OfficeAdminLayout: React.FC = () => {
   const navItems = [
     { label: 'Office Dashboard', path: '/office-admin/dashboard', icon: LayoutDashboard },
     { label: 'Hierarchy Tree', path: '/office-admin/tree', icon: Network },
+    { label: 'Teaching Faculty', path: '/office-admin/staff', icon: Users },
     { label: 'Admissions Workflow', path: '/office-admin/admissions', icon: UserPlus },
     { label: 'Classes & Sections', path: '/office-admin/classes', icon: Layers },
     { label: 'Faculty Allocations', path: '/office-admin/allocations', icon: BookOpen },

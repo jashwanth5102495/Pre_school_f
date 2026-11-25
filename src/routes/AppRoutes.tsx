@@ -150,6 +150,7 @@ export const AppRoutes: React.FC = () => {
         <Route index element={<Navigate to="/head-master/dashboard" replace />} />
         <Route path="dashboard" element={<HeadMasterDashboardPage />} />
         <Route path="tree" element={<OrganizationTreePage />} />
+        <Route path="staff" element={<SchoolStaffPage />} />
         <Route path="leaves" element={<HeadMasterLeavesPage />} />
         <Route path="classes" element={<HeadMasterClassesPage />} />
         <Route path="allocations" element={<TeacherAllocationsPage />} />
@@ -170,6 +171,7 @@ export const AppRoutes: React.FC = () => {
         <Route index element={<Navigate to="/office-admin/dashboard" replace />} />
         <Route path="dashboard" element={<OfficeDashboardPage />} />
         <Route path="tree" element={<OrganizationTreePage />} />
+        <Route path="staff" element={<SchoolStaffPage />} />
         <Route path="admissions" element={<AdmissionsWorkflowPage />} />
         <Route path="classes" element={<HeadMasterClassesPage />} />
         <Route path="allocations" element={<TeacherAllocationsPage />} />

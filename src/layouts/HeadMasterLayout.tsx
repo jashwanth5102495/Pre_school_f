@@ -15,6 +15,7 @@ import {
   Menu,
   X,
   Network,
+  Users,
 } from 'lucide-react';
 
 export const HeadMasterLayout: React.FC = () => {
@@ -31,6 +32,7 @@ export const HeadMasterLayout: React.FC = () => {
   const navItems = [
     { label: 'Academic Dashboard', path: '/head-master/dashboard', icon: LayoutDashboard },
     { label: 'Hierarchy Tree', path: '/head-master/tree', icon: Network },
+    { label: 'Teaching Faculty', path: '/head-master/staff', icon: Users },
     { label: 'Teacher Leaves Review', path: '/head-master/leaves', icon: CalendarDays },
     { label: 'Classes & Sections', path: '/head-master/classes', icon: Layers },
     { label: 'Teacher Allotments', path: '/head-master/allocations', icon: GraduationCap },

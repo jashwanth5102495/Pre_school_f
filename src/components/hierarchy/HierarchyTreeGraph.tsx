@@ -147,7 +147,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   const canAddAcademic = isSuperAdmin || isSchoolAdmin;
   const canAddFinance = isSuperAdmin || isSchoolAdmin;
   const canManageClasses = isSuperAdmin || isSchoolAdmin || isHeadMaster || isOfficeAdmin;
-  const canAddTeacher = isSuperAdmin || isSchoolAdmin || isHeadMaster;
+  const canAddTeacher = isSuperAdmin || isSchoolAdmin || isHeadMaster || isOfficeAdmin;
   const canAllocateTeachers = isSuperAdmin || isSchoolAdmin || isHeadMaster || isOfficeAdmin;
   const canAddStudent = isSuperAdmin || isSchoolAdmin || isHeadMaster || isOfficeAdmin || isTeacher;
 
