@@ -24,6 +24,8 @@ import {
   Pause,
   Play,
   RotateCcw,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth.store';
 import { Button } from '../ui/Button';
@@ -77,6 +79,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [isMotionPaused, setIsMotionPaused] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const hasMovedRef = useRef(false);
 
   // Interactive Dragging Wire State (Blender / n8n Nodes style)
   const [draggingWire, setDraggingWire] = useState<{
@@ -273,12 +277,36 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
     setActiveSocket(null);
   };
 
-  // Canvas Mouse Move (Drag wire or Pan canvas)
-  const handleCanvasMouseMove = (e: React.MouseEvent) => {
-    if (!canvasRef.current) return;
-    const canvasRect = canvasRef.current.getBoundingClientRect();
+  // Canvas Pointer Handlers (Smooth click-and-drag panning anywhere on canvas)
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Only accept primary button (left click) or auxiliary (middle click)
+    if (e.button !== 0 && e.button !== 1) return;
 
-    if (draggingWire) {
+    const target = e.target as HTMLElement;
+    // Don't initiate panning if clicking an interactive control or wire socket
+    if (
+      target.closest('button') ||
+      target.closest('input') ||
+      target.closest('select') ||
+      target.closest('textarea') ||
+      target.closest('a') ||
+      target.closest('[id^="socket-"]') ||
+      target.closest('.interactive-action')
+    ) {
+      return;
+    }
+
+    setIsPanning(true);
+    hasMovedRef.current = false;
+    setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {}
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (draggingWire && canvasRef.current) {
+      const canvasRect = canvasRef.current.getBoundingClientRect();
       setDraggingWire((prev) =>
         prev
           ? {
@@ -289,23 +317,38 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
           : null
       );
     } else if (isPanning) {
+      hasMovedRef.current = true;
       setPan({
         x: e.clientX - panStart.x,
         y: e.clientY - panStart.y,
       });
+      requestAnimationFrame(updateWirePositions);
     }
   };
 
-  const handleCanvasMouseUp = () => {
-    if (draggingWire) setDraggingWire(null);
-    if (isPanning) setIsPanning(false);
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isPanning) {
+      setIsPanning(false);
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {}
+    }
+    if (draggingWire) {
+      setDraggingWire(null);
+    }
   };
 
-  const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    // Start pan if clicking on empty canvas area
-    if (e.target === canvasRef.current || (e.target as HTMLElement).id === 'grid-background') {
-      setIsPanning(true);
-      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+  // Canvas Trackpad / Mouse Wheel Zoom & Pan
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const zoomDelta = -e.deltaY * 0.0015;
+      setZoom((z) => Math.min(2.0, Math.max(0.4, +(z + zoomDelta).toFixed(2))));
+    } else {
+      setPan((prev) => ({
+        x: prev.x - e.deltaX * 0.8,
+        y: prev.y - e.deltaY * 0.8,
+      }));
     }
   };
 
@@ -485,17 +528,28 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   };
 
   return (
-    <div className="relative w-full flex flex-col xl:flex-row gap-6 min-h-[720px] select-none">
+    <div
+      className={`relative w-full select-none transition-all duration-200 ${
+        isFullscreen
+          ? 'fixed inset-0 z-50 bg-[#141414] w-screen h-screen m-0 p-0'
+          : 'h-[calc(100vh-215px)] min-h-[800px]'
+      }`}
+    >
       {/* ========================================================================= */}
-      {/* LEFT / CENTER: INTERACTIVE FLOWCHART CANVAS WITH N8N / BLENDER WIRES      */}
+      {/* EXPANSIVE INTERACTIVE FLOWCHART CANVAS (OUT-OF-BOX, FREELY MOVABLE)       */}
       {/* ========================================================================= */}
       <div
         ref={canvasRef}
         id="grid-background"
-        onMouseDown={handleCanvasMouseDown}
-        onMouseMove={handleCanvasMouseMove}
-        onMouseUp={handleCanvasMouseUp}
-        className="flex-1 rounded-2xl border border-slate-200 dark:border-[#383838] bg-[#161616] p-4 sm:p-6 lg:p-8 overflow-hidden relative flex flex-col items-center shadow-xs cursor-default h-[780px]"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onWheel={handleWheel}
+        className={`w-full h-full ${
+          isFullscreen ? 'rounded-none border-0' : 'rounded-2xl border border-neutral-800'
+        } bg-[#141414] overflow-hidden relative flex flex-col items-center shadow-2xl ${
+          isPanning ? 'cursor-grabbing' : 'cursor-grab'
+        }`}
       >
         {/* Subtle Canvas Dot Grid Pattern matching n8n / user attachment */}
         <div
@@ -702,13 +756,14 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
             transformOrigin: '50% 0',
             transition: isPanning ? 'none' : 'transform 0.15s ease-out',
           }}
-          className="w-full flex flex-col items-center max-w-5xl relative z-10 py-2 pointer-events-auto"
+          className="w-full max-w-[1360px] min-w-[1100px] flex flex-col items-center relative z-10 py-2 pointer-events-auto"
         >
           {/* LEVEL 0: SCHOOL TENANT NODE */}
           {!isHeadMaster && !isOfficeAdmin && !isTeacher && (
             <>
               <div
-                onClick={() =>
+                onClick={() => {
+                  if (hasMovedRef.current) return;
                   setSelectedNode({
                     type: 'SCHOOL',
                     title: 'School Tenant Profile',
@@ -722,8 +777,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                     phone: school?.profile?.primaryPhone,
                     email: school?.profile?.officialEmail,
                     address: `${school?.profile?.city || ''}, ${school?.profile?.state || ''}`,
-                  })
-                }
+                  });
+                }}
                 className={`w-80 p-4 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 group ${
                   selectedNode?.type === 'SCHOOL'
                     ? 'border-[#eb4438] ring-2 ring-[#eb4438]/20 shadow-md'
@@ -776,14 +831,15 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                 principals.map((p: any) => (
                   <div
                     key={p.id}
-                    onClick={() =>
+                    onClick={() => {
+                      if (hasMovedRef.current) return;
                       setSelectedNode({
                         ...p,
                         type: 'SCHOOL_ADMIN',
                         title: 'Admin Principal Profile',
                         roleTitle: 'Institution Executive Head',
-                      })
-                    }
+                      });
+                    }}
                     className={`w-80 p-4 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
                       selectedNode?.id === p.id
                         ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-md'
@@ -813,11 +869,12 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                 </div>
               )}
 
-              {/* Dual Branching Rail into Academic & Operations */}
-              <div className="w-full flex flex-col items-center my-2 relative">
+              {/* 3-Pillar Branching Rail: Classes, Faculty, Operations */}
+              <div className="w-full flex flex-col items-center my-3 relative">
                 <div className="w-0.5 h-6 bg-slate-600" />
-                <div className="w-2/3 h-0.5 bg-slate-600" />
-                <div className="w-2/3 flex justify-between">
+                <div className="w-4/5 h-0.5 bg-slate-600" />
+                <div className="w-4/5 flex justify-between">
+                  <div className="w-0.5 h-6 bg-slate-600" />
                   <div className="w-0.5 h-6 bg-slate-600" />
                   <div className="w-0.5 h-6 bg-slate-600" />
                 </div>
@@ -826,33 +883,34 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
           )}
 
           {/* ===================================================================== */}
-          {/* LEVEL 2: DUAL BRANCHING ARCHITECTURE                                  */}
+          {/* LEVEL 2: 3-PILLAR DECENTRALIZED ARCHITECTURE (CLASSES, TEACHERS, OPS) */}
           {/* ===================================================================== */}
           {!isTeacher && (
-            <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
               {/* ----------------------------------------------------------------- */}
-              {/* BRANCH A: ACADEMIC LEADERSHIP, CLASSES & FACULTY (COLS 8/12)       */}
+              {/* PILLAR 1: ACADEMIC DIRECTORATE & CLASS NODES (COLS 5/12)           */}
               {/* ----------------------------------------------------------------- */}
-              <div className="lg:col-span-8 flex flex-col items-center">
-                {/* Academic Header & Leader Card */}
+              <div className="lg:col-span-5 flex flex-col items-center">
+                {/* Academic Directorate Leader Card */}
                 <div className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 mb-1.5 flex items-center gap-1.5">
                   <GraduationCap className="w-4 h-4" />
-                  <span>Academic Directorate & Curriculum Leadership</span>
+                  <span>Academic Directorate & Curriculum</span>
                 </div>
 
                 {academics.length > 0 ? (
                   academics.map((a: any) => (
                     <div
                       key={a.id}
-                      onClick={() =>
+                      onClick={() => {
+                        if (hasMovedRef.current) return;
                         setSelectedNode({
                           ...a,
                           type: 'HEAD_MASTER',
                           title: 'Master Academic Profile',
                           roleTitle: 'Academic Director & Curriculum Head',
-                        })
-                      }
-                      className={`w-full max-w-md p-3.5 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
+                        });
+                      }}
+                      className={`w-full max-w-sm p-3.5 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
                         selectedNode?.id === a.id
                           ? 'border-emerald-500 ring-2 ring-emerald-500/20 shadow-md'
                           : 'border-[#383838]'
@@ -874,402 +932,363 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                 ) : (
                   <div
                     onClick={() => canAddAcademic && handleOpenAdd('HEAD_MASTER')}
-                    className="w-full max-w-md p-3 rounded-2xl border border-dashed border-slate-600 bg-[#242424] flex items-center justify-center gap-2 text-xs font-semibold text-slate-400 hover:text-emerald-400 hover:border-emerald-400 transition-colors cursor-pointer"
+                    className="w-full max-w-sm p-3 rounded-2xl border border-dashed border-slate-600 bg-[#242424] flex items-center justify-center gap-2 text-xs font-semibold text-slate-400 hover:text-emerald-400 hover:border-emerald-400 transition-colors cursor-pointer"
                   >
                     <Plus className="w-4 h-4 text-emerald-500" />
                     <span>Set Master Academic</span>
                   </div>
                 )}
 
-                {/* Sub-connector from Academic to Classes & Teachers */}
+                {/* Vertical Rail connecting Academic Head to Class Nodes */}
                 <div className="flex flex-col items-center my-2 relative">
-                  <div className="w-0.5 h-6 bg-slate-600" />
                   <div className="w-0.5 h-6 bg-slate-600" />
                 </div>
 
-                {/* --------------------------------------------------------------- */}
-                {/* NODE HUB: CLASSES (WITH SUBJECT SOCKETS) -> TEACHER NODES        */}
-                {/* --------------------------------------------------------------- */}
-                <div className="w-full rounded-2xl border border-[#383838] bg-[#1e1e1e] p-4 shadow-xs">
-                  {/* Tier Subheader with Live Connection instructions */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#303030] mb-4 gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-blue-950/70 text-blue-400 flex items-center justify-center">
-                        <Layers2 className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
-                          <span>Classes & Subject Endpoints Hub</span>
-                        </h4>
-                        <p className="text-[10px] text-slate-400">
-                          Drag yellow subject endpoint dots to connect cables directly to Faculty Teachers
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      {canManageClasses && (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenAdd('CLASS')}
-                          className="px-2.5 py-1 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1 shadow-xs transition-colors"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Add Class</span>
-                        </button>
-                      )}
-                      {canAddTeacher && (
-                        <button
-                          type="button"
-                          onClick={() => handleOpenAdd('TEACHER')}
-                          className="px-2.5 py-1 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white flex items-center gap-1 shadow-xs transition-colors"
-                        >
-                          <Plus className="w-3.5 h-3.5" />
-                          <span>Add Teacher</span>
-                        </button>
-                      )}
-                    </div>
+                {/* INDEPENDENT CLASS GRADE NODES (NO OUTER WRAPPER BOX) */}
+                <div className="w-full space-y-3.5">
+                  <div className="flex items-center justify-between px-1">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1.5">
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Class Grade Nodes ({classes.length})</span>
+                    </span>
+                    {canManageClasses && (
+                      <button
+                        type="button"
+                        onClick={() => handleOpenAdd('CLASS')}
+                        className="px-2.5 py-1 text-xs font-bold rounded-xl bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1 shadow-xs transition-colors interactive-action"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Add Class</span>
+                      </button>
+                    )}
                   </div>
 
-                  {/* Dual Column Layout: Left = Class Nodes with Subject Sockets, Right = Teacher Nodes with Input Sockets */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative">
-                    {/* SUB-COLUMN 1: CLASSES & THEIR SUBJECT ENDPOINTS */}
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between px-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1">
-                          <Layers className="w-3 h-3" />
-                          <span>Class Grade Nodes ({classes.length})</span>
-                        </span>
-                        {canManageClasses && (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenAdd('CLASS')}
-                            className="text-[10px] font-bold text-blue-400 hover:underline flex items-center gap-0.5"
-                          >
-                            <Plus className="w-3 h-3" /> + New Class
-                          </button>
-                        )}
-                      </div>
+                  {classes.map((cls: any) => {
+                    const isSelected = selectedNode?.id === cls.id;
+                    const classAllocs = cls.teacherAllocations || [];
 
-                      {classes.map((cls: any) => {
-                        const isSelected = selectedNode?.id === cls.id;
-                        const classAllocs = cls.teacherAllocations || [];
+                    const classSubs =
+                      cls.classSubjects?.length > 0
+                        ? cls.classSubjects.map((cs: any) => cs.subject)
+                        : subjects.length > 0
+                        ? subjects.slice(0, 6)
+                        : [
+                            { id: 'math', name: 'Mathematics', code: 'MATH-101' },
+                            { id: 'phy', name: 'Physics', code: 'PHY-101' },
+                            { id: 'eng', name: 'English Literature', code: 'ENG-101' },
+                            { id: 'chem', name: 'Chemistry', code: 'CHEM-101' },
+                            { id: 'cs', name: 'Computer Science', code: 'CS-101' },
+                            { id: 'sst', name: 'Social Studies', code: 'SST-101' },
+                          ];
 
-                        // Retrieve class subjects (fallback to school subjects if not linked)
-                        const classSubs =
-                          cls.classSubjects?.length > 0
-                            ? cls.classSubjects.map((cs: any) => cs.subject)
-                            : subjects.length > 0
-                            ? subjects.slice(0, 6)
-                            : [
-                                { id: 'math', name: 'Mathematics', code: 'MATH-101' },
-                                { id: 'phy', name: 'Physics', code: 'PHY-101' },
-                                { id: 'eng', name: 'English Literature', code: 'ENG-101' },
-                                { id: 'chem', name: 'Chemistry', code: 'CHEM-101' },
-                                { id: 'cs', name: 'Computer Science', code: 'CS-101' },
-                                { id: 'sst', name: 'Social Studies', code: 'SST-101' },
-                              ];
-
-                        return (
-                          <div
-                            key={cls.id}
-                            id={`node-class-${cls.id}`}
-                            className={`rounded-2xl border transition-all duration-200 bg-[#252525] p-3.5 shadow-sm relative ${
-                              isSelected
-                                ? 'border-blue-500 ring-2 ring-blue-500/20'
-                                : 'border-[#383838] hover:border-slate-500'
-                            }`}
-                          >
-                            {/* Class Header */}
-                            <div className="flex items-center justify-between mb-2 pb-2 border-b border-[#333]">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
-                                  {cls.code?.slice(0, 3) || 'C'}
-                                </span>
-                                <div className="min-w-0">
-                                  <div className="font-bold text-xs text-white truncate">{cls.name}</div>
-                                  <div className="text-[10px] text-slate-400">
-                                    {cls.sections?.reduce(
-                                      (acc: number, s: any) => acc + (s._count?.students || 0),
-                                      0
-                                    )}{' '}
-                                    Students • {classSubs.length} Subject Endpoints
-                                  </div>
-                                </div>
+                    return (
+                      <div
+                        key={cls.id}
+                        id={`node-class-${cls.id}`}
+                        className={`rounded-2xl border transition-all duration-200 bg-[#252525] p-4 shadow-md relative ${
+                          isSelected
+                            ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-lg'
+                            : 'border-[#383838] hover:border-slate-500'
+                        }`}
+                      >
+                        {/* Class Header */}
+                        <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-[#333]">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <span className="w-8 h-8 rounded-xl bg-blue-600 text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-xs">
+                              {cls.code?.slice(0, 3) || 'C'}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="font-bold text-sm text-white truncate">{cls.name}</div>
+                              <div className="text-[11px] text-slate-400">
+                                {cls.sections?.reduce(
+                                  (acc: number, s: any) => acc + (s._count?.students || 0),
+                                  0
+                                )}{' '}
+                                Students • {classSubs.length} Subject Endpoints
                               </div>
-
-                              <div className="flex items-center gap-1">
-                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 font-bold">
-                                  {cls.code}
-                                </span>
-                                {canManageClasses && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => handleDeleteClass(cls.id, cls.name, e)}
-                                    title="Delete Class"
-                                    className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-red-950/30 transition-colors"
-                                  >
-                                    <Trash2 className="w-3 h-3" />
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Section Pills */}
-                            <div className="flex flex-wrap items-center gap-1.5 mb-3">
-                              {cls.sections?.map((sec: any) => (
-                                <span
-                                  key={sec.id}
-                                  className="text-[10px] px-2 py-0.5 rounded-md bg-[#1d1d1d] border border-[#3c3c3c] text-slate-300 font-medium flex items-center gap-1"
-                                >
-                                  <span>{sec.name}</span>
-                                  <span className="text-[9px] text-slate-500">
-                                    ({sec._count?.students || 0})
-                                  </span>
-                                </span>
-                              ))}
-                              {canManageClasses && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleOpenAdd('SECTION', cls.id);
-                                  }}
-                                  className="text-[10px] px-1.5 py-0.5 rounded-md border border-dashed border-blue-500 text-blue-400 hover:bg-blue-950/30 flex items-center gap-0.5 font-semibold"
-                                >
-                                  <Plus className="w-2.5 h-2.5" /> Sec
-                                </button>
-                              )}
-                            </div>
-
-                            {/* =================================================== */}
-                            {/* SUBJECT ENDPOINTS LIST (EACH SUBJECT HAS AN ENDPOINT) */}
-                            {/* =================================================== */}
-                            <div className="space-y-1.5">
-                              <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 px-1">
-                                Output Sockets ({classSubs.length})
-                              </div>
-
-                              {classSubs.map((sub: any) => {
-                                const alloc = classAllocs.find(
-                                  (a: any) => a.subjectId === sub.id || a.subject?.id === sub.id
-                                );
-                                const isSocketActive =
-                                  activeSocket?.classId === cls.id && activeSocket?.subjectId === sub.id;
-                                const teacherName = alloc?.teacher
-                                  ? `${alloc.teacher.firstName} ${alloc.teacher.lastName}`.trim()
-                                  : 'Faculty';
-
-                                return (
-                                  <div
-                                    key={sub.id}
-                                    className="group/sub flex items-center justify-between py-1.5 px-2 rounded-xl bg-[#1d1d1d] border border-[#363636] hover:border-amber-500/60 transition-colors relative"
-                                  >
-                                    <div className="flex items-center gap-1.5 min-w-0 pr-3">
-                                      <span
-                                        className={`w-2 h-2 rounded-full shrink-0 ${
-                                          alloc ? 'bg-emerald-400' : 'bg-amber-400'
-                                        }`}
-                                      />
-                                      <span className="text-[11px] font-medium text-slate-200 truncate">
-                                        {sub.name}
-                                      </span>
-                                    </div>
-
-                                    {/* Mapped Teacher Tag or Unassigned */}
-                                    <div className="flex items-center gap-1 shrink-0 pr-2">
-                                      {alloc ? (
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/50 border border-emerald-800 text-emerald-300 flex items-center gap-1 font-semibold">
-                                          <span>{teacherName}</span>
-                                          {canAllocateTeachers && (
-                                            <button
-                                              type="button"
-                                              onClick={(e) => handleRemoveAllocation(alloc.id, e)}
-                                              title="Disconnect cable"
-                                              className="hover:text-red-400"
-                                            >
-                                              <X className="w-2.5 h-2.5" />
-                                            </button>
-                                          )}
-                                        </span>
-                                      ) : (
-                                        <span className="text-[9px] text-slate-500 italic">Drag to map</span>
-                                      )}
-                                    </div>
-
-                                    {/* CIRCULAR OUTPUT SOCKET ENDPOINT (BLENDER / N8N STYLE) */}
-                                    <div
-                                      id={`socket-out-${cls.id}-${sub.id}`}
-                                      title="Drag this endpoint dot to connect a wire to a teacher"
-                                      onMouseDown={(e) => handleStartDrag(cls, sub, e)}
-                                      onClick={(e) => handleSocketClick(cls, sub, e)}
-                                      className={`absolute -right-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-[#1d1d1d] cursor-crosshair transition-all hover:scale-135 shadow-sm z-30 flex items-center justify-center ${
-                                        alloc
-                                          ? 'bg-emerald-400 ring-2 ring-emerald-400/40'
-                                          : isSocketActive
-                                          ? 'bg-amber-400 ring-4 ring-amber-400/70 scale-125 animate-pulse'
-                                          : 'bg-yellow-400 hover:bg-yellow-300 ring-2 ring-yellow-400/40 animate-pulse'
-                                      }`}
-                                    >
-                                      <span className="w-1.5 h-1.5 rounded-full bg-[#1a1a1a]" />
-                                    </div>
-                                  </div>
-                                );
-                              })}
                             </div>
                           </div>
-                        );
-                      })}
 
-                      {classes.length === 0 && (
-                        <div
-                          onClick={() => canManageClasses && handleOpenAdd('CLASS')}
-                          className="p-6 rounded-2xl border border-dashed border-slate-600 text-center text-xs text-slate-400 hover:text-blue-400 hover:border-blue-400 cursor-pointer"
-                        >
-                          + Create First Academic Class
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950 text-blue-300 font-bold border border-blue-900/50">
+                              {cls.code}
+                            </span>
+                            {canManageClasses && (
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteClass(cls.id, cls.name, e)}
+                                title="Delete Class"
+                                className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-red-950/30 transition-colors interactive-action"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         </div>
-                      )}
-                    </div>
 
-                    {/* SUB-COLUMN 2: TEACHING FACULTY NODES (WITH RECEIVING INPUT SOCKETS) */}
-                    <div className="space-y-4">
-                      <div className="flex items-center justify-between px-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400 flex items-center gap-1">
-                          <BookOpen className="w-3 h-3" />
-                          <span>Teaching Faculty Nodes ({teachers.length})</span>
-                        </span>
-                        {canAddTeacher && (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenAdd('TEACHER')}
-                            className="text-[10px] font-bold text-rose-400 hover:underline flex items-center gap-0.5"
-                          >
-                            <Plus className="w-3 h-3" /> + Add Teacher
-                          </button>
-                        )}
-                      </div>
-
-                      {teachers.map((t: any) => {
-                        const isSelected = selectedNode?.id === t.id;
-                        const isTargetHovered = draggingWire || activeSocket;
-
-                        return (
-                          <div
-                            key={t.id}
-                            id={`node-teacher-${t.id}`}
-                            onMouseUp={(e) => handleTeacherDrop(t, e)}
-                            onClick={(e) => {
-                              if (activeSocket || draggingWire) {
-                                handleTeacherDrop(t, e);
-                              } else {
-                                setSelectedNode({
-                                  ...t,
-                                  type: 'TEACHER',
-                                  title: 'Faculty Teacher Profile',
-                                  roleTitle: 'Classroom Educator & Student Evaluator',
-                                });
-                              }
-                            }}
-                            className={`rounded-2xl border transition-all duration-200 bg-[#252525] p-3.5 shadow-sm relative ${
-                              isSelected
-                                ? 'border-rose-500 ring-2 ring-rose-500/20'
-                                : isTargetHovered
-                                ? 'border-amber-400 ring-2 ring-amber-400/40 bg-amber-950/20'
-                                : 'border-[#383838] hover:border-slate-500'
-                            }`}
-                          >
-                            {/* CIRCULAR RECEIVING INPUT SOCKET ON LEFT EDGE */}
-                            <div
-                              id={`socket-in-${t.id}`}
-                              title="Drop wire here to allot subject to this teacher"
-                              onMouseUp={(e) => handleTeacherDrop(t, e)}
-                              className={`absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-[#252525] cursor-pointer transition-all hover:scale-135 shadow-sm z-30 flex items-center justify-center ${
-                                isTargetHovered
-                                  ? 'bg-amber-400 ring-4 ring-amber-400/80 scale-125 animate-pulse'
-                                  : t.allocations?.length > 0
-                                  ? 'bg-emerald-400 ring-2 ring-emerald-400/40'
-                                  : 'bg-slate-400 hover:bg-amber-400 ring-1 ring-slate-400/40'
-                              }`}
+                        {/* Section Pills */}
+                        <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                          {cls.sections?.map((sec: any) => (
+                            <span
+                              key={sec.id}
+                              className="text-[10px] px-2 py-0.5 rounded-md bg-[#1d1d1d] border border-[#3c3c3c] text-slate-300 font-medium flex items-center gap-1"
                             >
-                              <span className="w-1.5 h-1.5 rounded-full bg-[#1a1a1a]" />
-                            </div>
-
-                            {/* Teacher Header */}
-                            <div className="flex items-center justify-between mb-2 pb-2 border-b border-[#333]">
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm">
-                                  {t.fullName?.[0] || 'T'}
-                                </div>
-                                <div className="min-w-0">
-                                  <div className="font-bold text-xs text-white truncate">{t.fullName}</div>
-                                  <div className="text-[10px] text-slate-400 truncate">
-                                    {t.teacherCode} • {t.designation || 'Faculty'}
-                                  </div>
-                                </div>
-                              </div>
-
-                              <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-rose-950/60 text-rose-300 shrink-0 border border-rose-900/60">
-                                Faculty
+                              <span>{sec.name}</span>
+                              <span className="text-[9px] text-slate-500">
+                                ({sec._count?.students || 0})
                               </span>
-                            </div>
+                            </span>
+                          ))}
+                          {canManageClasses && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenAdd('SECTION', cls.id);
+                              }}
+                              className="text-[10px] px-1.5 py-0.5 rounded-md border border-dashed border-blue-500 text-blue-400 hover:bg-blue-950/30 flex items-center gap-0.5 font-semibold interactive-action"
+                            >
+                              <Plus className="w-2.5 h-2.5" /> Sec
+                            </button>
+                          )}
+                        </div>
 
-                            {/* Connected Subject Wires / Badges */}
-                            <div className="space-y-1.5">
-                              <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                                Allotted Subjects ({t.allocations?.length || 0})
-                              </div>
+                        {/* Output Sockets (6 Subject Endpoints with right edge sockets) */}
+                        <div className="space-y-1.5">
+                          <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 px-1">
+                            Output Sockets ({classSubs.length})
+                          </div>
 
-                              {t.allocations?.length > 0 ? (
-                                <div className="flex flex-wrap gap-1.5">
-                                  {t.allocations.map((alloc: any) => (
-                                    <span
-                                      key={alloc.id}
-                                      className="text-[10px] pl-2 pr-1.5 py-0.5 rounded-lg bg-emerald-950/50 border border-emerald-800 text-emerald-300 font-semibold flex items-center gap-1.5"
-                                    >
-                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                                      <span>
-                                        {alloc.class?.name || 'Class'} • {alloc.subject?.name || 'Subject'}
-                                      </span>
+                          {classSubs.map((sub: any) => {
+                            const alloc = classAllocs.find(
+                              (a: any) => a.subjectId === sub.id || a.subject?.id === sub.id
+                            );
+                            const isSocketActive =
+                              activeSocket?.classId === cls.id && activeSocket?.subjectId === sub.id;
+                            const teacherName = alloc?.teacher
+                              ? `${alloc.teacher.firstName} ${alloc.teacher.lastName}`.trim()
+                              : 'Faculty';
+
+                            return (
+                              <div
+                                key={sub.id}
+                                className="group/sub flex items-center justify-between py-1.5 px-2.5 rounded-xl bg-[#1d1d1d] border border-[#363636] hover:border-amber-500/60 transition-colors relative"
+                              >
+                                <div className="flex items-center gap-2 min-w-0 pr-3">
+                                  <span
+                                    className={`w-2 h-2 rounded-full shrink-0 ${
+                                      alloc ? 'bg-emerald-400' : 'bg-amber-400'
+                                    }`}
+                                  />
+                                  <span className="text-[11px] font-medium text-slate-200 truncate">
+                                    {sub.name}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-1 shrink-0 pr-3">
+                                  {alloc ? (
+                                    <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-950/60 border border-emerald-800 text-emerald-300 flex items-center gap-1 font-semibold">
+                                      <span>{teacherName}</span>
                                       {canAllocateTeachers && (
                                         <button
                                           type="button"
                                           onClick={(e) => handleRemoveAllocation(alloc.id, e)}
-                                          title="Unlink subject wire"
-                                          className="hover:text-red-400 p-0.5"
+                                          title="Disconnect cable"
+                                          className="hover:text-red-400 interactive-action"
                                         >
                                           <X className="w-2.5 h-2.5" />
                                         </button>
                                       )}
                                     </span>
-                                  ))}
+                                  ) : (
+                                    <span className="text-[9px] text-slate-500 italic">Drag to map</span>
+                                  )}
                                 </div>
-                              ) : (
-                                <div className="text-[10px] text-slate-500 italic py-1">
-                                  Drop any class subject wire here to allot
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
 
-                      {teachers.length === 0 && (
-                        <div
-                          onClick={() => canAddTeacher && handleOpenAdd('TEACHER')}
-                          className="p-6 rounded-2xl border border-dashed border-slate-600 text-center text-xs text-slate-400 hover:text-rose-400 hover:border-rose-400 cursor-pointer"
-                        >
-                          + Add First Teacher Faculty
+                                {/* CIRCULAR OUTPUT SOCKET ON RIGHT EDGE */}
+                                <div
+                                  id={`socket-out-${cls.id}-${sub.id}`}
+                                  title="Drag this endpoint dot to connect a wire to a teacher"
+                                  onMouseDown={(e) => handleStartDrag(cls, sub, e)}
+                                  onClick={(e) => handleSocketClick(cls, sub, e)}
+                                  className={`absolute -right-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-[#1d1d1d] cursor-crosshair transition-all hover:scale-135 shadow-sm z-30 flex items-center justify-center ${
+                                    alloc
+                                      ? 'bg-emerald-400 ring-2 ring-emerald-400/40'
+                                      : isSocketActive
+                                      ? 'bg-amber-400 ring-4 ring-amber-400/70 scale-125 animate-pulse'
+                                      : 'bg-yellow-400 hover:bg-yellow-300 ring-2 ring-yellow-400/40 animate-pulse'
+                                  }`}
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full bg-[#1a1a1a]" />
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      )}
+                      </div>
+                    );
+                  })}
+
+                  {classes.length === 0 && (
+                    <div
+                      onClick={() => canManageClasses && handleOpenAdd('CLASS')}
+                      className="p-6 rounded-2xl border border-dashed border-slate-600 text-center text-xs text-slate-400 hover:text-blue-400 hover:border-blue-400 cursor-pointer"
+                    >
+                      + Create First Academic Class
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
 
               {/* ----------------------------------------------------------------- */}
-              {/* BRANCH B: OPERATIONS & FINANCE (COLS 4/12)                         */}
+              {/* PILLAR 2: TEACHING FACULTY STAFF NODES (COLS 4/12)                */}
               {/* ----------------------------------------------------------------- */}
               <div className="lg:col-span-4 flex flex-col items-center">
+                {/* Faculty Directorate Header */}
+                <div className="text-[10px] font-extrabold uppercase tracking-wider text-rose-400 mb-1.5 flex items-center gap-1.5">
+                  <BookOpen className="w-4 h-4" />
+                  <span>Teaching Faculty Staff</span>
+                </div>
+
+                <div className="w-full flex items-center justify-between px-1 mb-2">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-rose-400 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" />
+                    <span>Faculty Teachers ({teachers.length})</span>
+                  </span>
+                  {canAddTeacher && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAdd('TEACHER')}
+                      className="px-2.5 py-1 text-xs font-bold rounded-xl bg-rose-600 hover:bg-rose-700 text-white flex items-center gap-1 shadow-xs transition-colors interactive-action"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Teacher</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* INDEPENDENT TEACHER NODES (NO OUTER WRAPPER BOX) */}
+                <div className="w-full space-y-3.5">
+                  {teachers.map((t: any) => {
+                    const isSelected = selectedNode?.id === t.id;
+                    const isTargetHovered = draggingWire || activeSocket;
+
+                    return (
+                      <div
+                        key={t.id}
+                        id={`node-teacher-${t.id}`}
+                        onMouseUp={(e) => handleTeacherDrop(t, e)}
+                        onClick={(e) => {
+                          if (hasMovedRef.current) return;
+                          if (activeSocket || draggingWire) {
+                            handleTeacherDrop(t, e);
+                          } else {
+                            setSelectedNode({
+                              ...t,
+                              type: 'TEACHER',
+                              title: 'Faculty Teacher Profile',
+                              roleTitle: 'Classroom Educator & Student Evaluator',
+                            });
+                          }
+                        }}
+                        className={`rounded-2xl border transition-all duration-200 bg-[#252525] p-4 shadow-md relative ${
+                          isSelected
+                            ? 'border-rose-500 ring-2 ring-rose-500/20 shadow-lg'
+                            : isTargetHovered
+                            ? 'border-amber-400 ring-2 ring-amber-400/40 bg-amber-950/20'
+                            : 'border-[#383838] hover:border-slate-500'
+                        }`}
+                      >
+                        {/* CIRCULAR RECEIVING INPUT SOCKET ON LEFT EDGE */}
+                        <div
+                          id={`socket-in-${t.id}`}
+                          title="Drop wire here to allot subject to this teacher"
+                          onMouseUp={(e) => handleTeacherDrop(t, e)}
+                          className={`absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-[#252525] cursor-pointer transition-all hover:scale-135 shadow-sm z-30 flex items-center justify-center ${
+                            isTargetHovered
+                              ? 'bg-amber-400 ring-4 ring-amber-400/80 scale-125 animate-pulse'
+                              : t.allocations?.length > 0
+                              ? 'bg-emerald-400 ring-2 ring-emerald-400/40'
+                              : 'bg-slate-400 hover:bg-amber-400 ring-1 ring-slate-400/40'
+                          }`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#1a1a1a]" />
+                        </div>
+
+                        {/* Teacher Header */}
+                        <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-[#333]">
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
+                              {t.fullName?.[0] || 'T'}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="font-bold text-xs text-white truncate">{t.fullName}</div>
+                              <div className="text-[10px] text-slate-400 truncate">
+                                {t.teacherCode} • {t.designation || 'Faculty'}
+                              </div>
+                            </div>
+                          </div>
+
+                          <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-rose-950/60 text-rose-300 shrink-0 border border-rose-900/60">
+                            Faculty
+                          </span>
+                        </div>
+
+                        {/* Connected Subject Wires / Badges */}
+                        <div className="space-y-1.5">
+                          <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                            Allotted Subjects ({t.allocations?.length || 0})
+                          </div>
+
+                          {t.allocations?.length > 0 ? (
+                            <div className="flex flex-wrap gap-1.5">
+                              {t.allocations.map((alloc: any) => (
+                                <span
+                                  key={alloc.id}
+                                  className="text-[10px] pl-2 pr-1.5 py-0.5 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300 font-semibold flex items-center gap-1.5"
+                                >
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                  <span>
+                                    {alloc.class?.name || 'Class'} • {alloc.subject?.name || 'Subject'}
+                                  </span>
+                                  {canAllocateTeachers && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleRemoveAllocation(alloc.id, e)}
+                                      title="Unlink subject wire"
+                                      className="hover:text-red-400 p-0.5 interactive-action"
+                                    >
+                                      <X className="w-2.5 h-2.5" />
+                                    </button>
+                                  )}
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="text-[10px] text-slate-500 italic py-1">
+                              Drop any class subject wire here to allot
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {teachers.length === 0 && (
+                    <div
+                      onClick={() => canAddTeacher && handleOpenAdd('TEACHER')}
+                      className="p-6 rounded-2xl border border-dashed border-slate-600 text-center text-xs text-slate-400 hover:text-rose-400 hover:border-rose-400 cursor-pointer"
+                    >
+                      + Add First Teacher Faculty
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* ----------------------------------------------------------------- */}
+              {/* PILLAR 3: OPERATIONS & FINANCE (COLS 3/12)                         */}
+              {/* ----------------------------------------------------------------- */}
+              <div className="lg:col-span-3 flex flex-col items-center">
                 <div className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400 mb-1.5 flex items-center gap-1.5">
                   <Briefcase className="w-4 h-4" />
                   <span>Operations & Finance</span>
@@ -1279,14 +1298,15 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                   finances.map((f: any) => (
                     <div
                       key={f.id}
-                      onClick={() =>
+                      onClick={() => {
+                        if (hasMovedRef.current) return;
                         setSelectedNode({
                           ...f,
                           type: 'OFFICE_ADMIN',
                           title: 'Office Finance Profile',
                           roleTitle: 'Finance, Fee Collections & Admissions',
-                        })
-                      }
+                        });
+                      }}
                       className={`w-full p-3.5 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
                         selectedNode?.id === f.id
                           ? 'border-amber-500 ring-2 ring-amber-500/20 shadow-md'
@@ -1318,7 +1338,6 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 
                 {/* Sub-connector down into responsibilities */}
                 <div className="flex flex-col items-center my-2 relative">
-                  <div className="w-0.5 h-6 bg-slate-600" />
                   <div className="w-0.5 h-6 bg-slate-600" />
                 </div>
 
@@ -1433,14 +1452,15 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                 {filteredStudents.map((s: any) => (
                   <div
                     key={s.id}
-                    onClick={() =>
+                    onClick={() => {
+                      if (hasMovedRef.current) return;
                       setSelectedNode({
                         ...s,
                         type: 'STUDENT',
                         title: 'Student Profile',
                         roleTitle: `Enrolled Student • ${s.className} (${s.sectionName})`,
-                      })
-                    }
+                      });
+                    }}
                     className={`p-2.5 rounded-xl border transition-all duration-200 bg-[#292929] cursor-pointer flex items-center justify-between gap-2 ${
                       selectedNode?.id === s.id
                         ? 'border-indigo-500 ring-2 ring-indigo-500/20'
@@ -1528,14 +1548,35 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
               </>
             )}
           </button>
+
+          <div className="w-px h-5 bg-[#333333] mx-1" />
+
+          <button
+            type="button"
+            onClick={() => setIsFullscreen(!isFullscreen)}
+            title={isFullscreen ? 'Exit Full Screen' : 'Toggle Full Screen Workspace'}
+            className="flex items-center gap-1.5 px-3 py-1.5 font-semibold text-xs hover:text-white hover:bg-[#2c2c2c] rounded-xl transition-colors active:scale-95 text-slate-200"
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5 text-blue-400" />
+                <span>Exit Fullscreen</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5 text-blue-400" />
+                <span>Fullscreen</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
 
       {/* ========================================================================= */}
-      {/* RIGHT SIDE PANEL: DETAILS & ACTIONS (NON-POPUP SPLIT SCREEN)              */}
+      {/* RIGHT SIDE FLOATING DRAWER: DETAILS & ACTIONS                             */}
       {/* ========================================================================= */}
       {(selectedNode || addingChildType) && (
-        <div className="w-full xl:w-96 rounded-2xl border border-[#383838] bg-[#242424] p-5 shadow-sm shrink-0 flex flex-col justify-between animate-in slide-in-from-right duration-200">
+        <div className="absolute top-4 right-4 bottom-4 w-96 rounded-2xl border border-[#383838] bg-[#1c1c1c]/98 backdrop-blur-md p-5 shadow-2xl z-40 flex flex-col justify-between overflow-y-auto animate-in slide-in-from-right duration-200">
           {/* 1. ADD MEMBER / CLASS / SECTION FORM VIEW */}
           {addingChildType && (
             <div>

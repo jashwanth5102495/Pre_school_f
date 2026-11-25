@@ -129,20 +129,22 @@ export const OrganizationTreePage: React.FC = () => {
         </div>
       </div>
 
-      {/* Main Graph Component */}
+      {/* Main Graph Component (Expansive Full Canvas below overview badges) */}
       {isLoading ? (
-        <div className="p-8 space-y-4 rounded-2xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626]">
+        <div className="p-8 space-y-4 rounded-2xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] h-[750px]">
           <Skeleton className="h-14 w-full rounded-xl" />
           <Skeleton className="h-64 w-full rounded-xl" />
           <Skeleton className="h-32 w-full rounded-xl" />
         </div>
       ) : (
-        <HierarchyTreeGraph
-          data={data}
-          onRefresh={refetch}
-          selectedSchoolId={selectedSchoolId}
-          onSelectSchool={(id) => setSelectedSchoolId(id)}
-        />
+        <div className="w-full h-full relative">
+          <HierarchyTreeGraph
+            data={data}
+            onRefresh={refetch}
+            selectedSchoolId={selectedSchoolId}
+            onSelectSchool={(id) => setSelectedSchoolId(id)}
+          />
+        </div>
       )}
     </div>
   );
