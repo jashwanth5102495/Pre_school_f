@@ -13,6 +13,7 @@ import {
   GraduationCap,
   ShieldCheck,
   CheckCircle2,
+  Layers,
 } from 'lucide-react';
 
 export const OrganizationTreePage: React.FC = () => {
@@ -66,7 +67,7 @@ export const OrganizationTreePage: React.FC = () => {
       </div>
 
       {/* Overview Stat Badges */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div className="p-3.5 rounded-xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 flex items-center justify-center shrink-0">
             <School className="w-4 h-4" />
@@ -92,6 +93,18 @@ export const OrganizationTreePage: React.FC = () => {
         </div>
 
         <div className="p-3.5 rounded-xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg bg-cyan-50 dark:bg-cyan-950/50 text-cyan-600 flex items-center justify-center shrink-0">
+            <Layers className="w-4 h-4" />
+          </div>
+          <div>
+            <div className="text-[11px] text-slate-400 font-medium">Classes & Batches</div>
+            <div className="text-sm font-bold text-slate-900 dark:text-white">
+              {data?.classes?.length || 0} Classes
+            </div>
+          </div>
+        </div>
+
+        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] flex items-center gap-3">
           <div className="w-9 h-9 rounded-lg bg-rose-50 dark:bg-rose-950/50 text-rose-600 flex items-center justify-center shrink-0">
             <Users className="w-4 h-4" />
           </div>
@@ -103,7 +116,7 @@ export const OrganizationTreePage: React.FC = () => {
           </div>
         </div>
 
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] flex items-center gap-3">
+        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] flex items-center gap-3 col-span-2 sm:col-span-1">
           <div className="w-9 h-9 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 flex items-center justify-center shrink-0">
             <ShieldCheck className="w-4 h-4" />
           </div>

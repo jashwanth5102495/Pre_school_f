@@ -38,4 +38,38 @@ export const hierarchyService = {
     const res = await apiClient.delete(`/hierarchy/members/${id}?type=${type}`);
     return res.data.data;
   },
+
+  async createClass(data: { schoolId: string; name: string; code?: string; sections?: string[] }) {
+    const res = await apiClient.post('/hierarchy/classes', data);
+    return res.data.data;
+  },
+
+  async createSection(data: { schoolId: string; classId: string; name: string; capacity?: number }) {
+    const res = await apiClient.post('/hierarchy/sections', data);
+    return res.data.data;
+  },
+
+  async deleteClass(classId: string, schoolId?: string) {
+    const params = schoolId ? { schoolId } : {};
+    const res = await apiClient.delete(`/hierarchy/classes/${classId}`, { params });
+    return res.data.data;
+  },
+
+  async allocateTeacher(data: {
+    schoolId: string;
+    teacherId: string;
+    classId: string;
+    sectionId?: string;
+    subjectId?: string;
+    isClassTeacher?: boolean;
+  }) {
+    const res = await apiClient.post('/hierarchy/allocate', data);
+    return res.data.data;
+  },
+
+  async deleteAllocation(allocationId: string, schoolId?: string) {
+    const params = schoolId ? { schoolId } : {};
+    const res = await apiClient.delete(`/hierarchy/allocate/${allocationId}`, { params });
+    return res.data.data;
+  },
 };
