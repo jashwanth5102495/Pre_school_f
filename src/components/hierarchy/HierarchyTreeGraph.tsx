@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Building2,
   Shield,
@@ -11,29 +11,19 @@ import {
   Plus,
   X,
   Search,
-  Filter,
   CheckCircle2,
-  MoreVertical,
-  ChevronRight,
   Phone,
   Mail,
-  Calendar,
   Layers,
   Sparkles,
   Loader2,
-  Edit2,
   Trash2,
-  ExternalLink,
-  Link2,
-  Unlink,
   ArrowRight,
   Zap,
-  Check,
-  AlertCircle,
-  Info,
-  ChevronDown,
-  Award,
   Layers2,
+  Pause,
+  Play,
+  RotateCcw,
 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth.store';
 import { Button } from '../ui/Button';
@@ -48,6 +38,21 @@ interface HierarchyTreeGraphProps {
   readOnly?: boolean;
 }
 
+interface WireConnection {
+  id: string; // allocation id
+  classId: string;
+  className: string;
+  subjectId: string;
+  subjectName: string;
+  teacherId: string;
+  teacherName: string;
+  isClassTeacher: boolean;
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+}
+
 export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   data,
   onRefresh,
@@ -56,6 +61,9 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   readOnly = false,
 }) => {
   const { user } = useAuthStore();
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  // Panels & Selection
   const [selectedNode, setSelectedNode] = useState<any | null>(null);
   const [addingChildType, setAddingChildType] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -63,23 +71,38 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
-  // Interactive Line / Allotment Connection State
-  const [connectionMode, setConnectionMode] = useState(false);
-  const [activeConnectorSource, setActiveConnectorSource] = useState<{
-    type: 'CLASS' | 'TEACHER';
-    id: string;
-    name: string;
-    classId?: string;
-    sectionId?: string;
-    teacherId?: string;
+  // Canvas Zoom, Pan & Motion State (n8n-style)
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+  const [isMotionPaused, setIsMotionPaused] = useState(false);
+
+  // Interactive Dragging Wire State (Blender / n8n Nodes style)
+  const [draggingWire, setDraggingWire] = useState<{
+    classId: string;
+    className: string;
+    subjectId: string;
+    subjectName: string;
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
   } | null>(null);
 
-  const [hoveredClassId, setHoveredClassId] = useState<string | null>(null);
-  const [hoveredTeacherId, setHoveredTeacherId] = useState<string | null>(null);
-  const [quickAllotClassId, setQuickAllotClassId] = useState<string | null>(null);
-  const [quickAllotTeacherId, setQuickAllotTeacherId] = useState<string | null>(null);
+  // Active click-to-connect socket (accessible alternative to dragging)
+  const [activeSocket, setActiveSocket] = useState<{
+    classId: string;
+    className: string;
+    subjectId: string;
+    subjectName: string;
+  } | null>(null);
 
-  // Form state for creating member / student / class / section
+  // Wire hover for disconnect
+  const [hoveredWireId, setHoveredWireId] = useState<string | null>(null);
+  const [wireConnections, setWireConnections] = useState<WireConnection[]>([]);
+
+  // Form state
   const [formData, setFormData] = useState({
     fullName: '',
     email: '',
@@ -91,26 +114,25 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
     firstName: '',
     lastName: '',
     admissionNo: '',
-    // Class specific
     className: '',
     classCode: '',
     sections: 'Section A, Section B',
     selectedTeacherId: '',
     isClassTeacher: true,
-    // Section specific
     sectionName: '',
   });
 
   const school = data?.school;
   const allSchools = data?.allSchools || [];
   const classes = data?.classes || [];
+  const subjects = data?.subjects || [];
   const principals = data?.principals || [];
   const academics = data?.academics || [];
   const finances = data?.finances || [];
   const teachers = data?.teachers || [];
   const students = data?.students || [];
 
-  // Determine current user permissions
+  // Determine permissions
   const isSuperAdmin = user?.userType === 'PLATFORM';
   const isSchoolAdmin = user?.role === 'SCHOOL_ADMIN';
   const isHeadMaster = user?.role === 'HEAD_MASTER';
@@ -125,7 +147,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   const canAllocateTeachers = isSuperAdmin || isSchoolAdmin || isHeadMaster || isOfficeAdmin;
   const canAddStudent = isSuperAdmin || isSchoolAdmin || isHeadMaster || isOfficeAdmin || isTeacher;
 
-  // Filter students based on search query
+  // Filter students
   const filteredStudents = students.filter((s: any) =>
     searchQuery
       ? s.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -133,6 +155,195 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
         s.className.toLowerCase().includes(searchQuery.toLowerCase())
       : true
   );
+
+  // Zoom handlers (matching n8n bottom-left bar)
+  const handleZoomIn = () => setZoom((z) => Math.min(1.8, +(z + 0.15).toFixed(2)));
+  const handleZoomOut = () => setZoom((z) => Math.max(0.4, +(z - 0.15).toFixed(2)));
+  const handleFitAll = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  // Re-calculate wire positions between sockets
+  const updateWirePositions = useCallback(() => {
+    if (!canvasRef.current) return;
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    const newWires: WireConnection[] = [];
+
+    classes.forEach((cls: any) => {
+      (cls.teacherAllocations || []).forEach((alloc: any) => {
+        const subjectId = alloc.subjectId || alloc.subject?.id;
+        const teacherId = alloc.teacherId || alloc.teacher?.id;
+
+        const sourceEl =
+          document.getElementById(`socket-out-${cls.id}-${subjectId}`) ||
+          document.getElementById(`socket-out-${cls.id}`);
+
+        const targetEl =
+          document.getElementById(`socket-in-${teacherId}-${subjectId}`) ||
+          document.getElementById(`socket-in-${teacherId}`);
+
+        if (sourceEl && targetEl) {
+          const sRect = sourceEl.getBoundingClientRect();
+          const tRect = targetEl.getBoundingClientRect();
+
+          newWires.push({
+            id: alloc.id,
+            classId: cls.id,
+            className: cls.name,
+            subjectId,
+            subjectName: alloc.subject?.name || 'Subject',
+            teacherId,
+            teacherName: alloc.teacher
+              ? `${alloc.teacher.firstName} ${alloc.teacher.lastName}`.trim()
+              : 'Faculty',
+            isClassTeacher: !!alloc.isClassTeacher,
+            startX: sRect.left + sRect.width / 2 - canvasRect.left,
+            startY: sRect.top + sRect.height / 2 - canvasRect.top,
+            endX: tRect.left + tRect.width / 2 - canvasRect.left,
+            endY: tRect.top + tRect.height / 2 - canvasRect.top,
+          });
+        }
+      });
+    });
+
+    setWireConnections(newWires);
+  }, [classes, teachers, zoom, pan]);
+
+  useEffect(() => {
+    updateWirePositions();
+    const timer = setTimeout(updateWirePositions, 100);
+    const handleResize = () => updateWirePositions();
+    window.addEventListener('resize', handleResize);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, [updateWirePositions, classes, teachers, zoom, pan]);
+
+  // Smooth Cubic Bezier generator for Blender/n8n style wires
+  const calculateBezierPath = (x1: number, y1: number, x2: number, y2: number) => {
+    const dx = Math.max(50, Math.abs(x2 - x1) * 0.45);
+    return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+  };
+
+  // Wire Dragging Handlers
+  const handleStartDrag = (cls: any, sub: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canAllocateTeachers || !canvasRef.current) return;
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+    const startX = e.clientX - canvasRect.left;
+    const startY = e.clientY - canvasRect.top;
+
+    setDraggingWire({
+      classId: cls.id,
+      className: cls.name,
+      subjectId: sub.id,
+      subjectName: sub.name,
+      startX,
+      startY,
+      currentX: startX,
+      currentY: startY,
+    });
+    setActiveSocket(null);
+  };
+
+  const handleSocketClick = (cls: any, sub: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canAllocateTeachers) return;
+    if (activeSocket?.classId === cls.id && activeSocket?.subjectId === sub.id) {
+      setActiveSocket(null);
+    } else {
+      setActiveSocket({
+        classId: cls.id,
+        className: cls.name,
+        subjectId: sub.id,
+        subjectName: sub.name,
+      });
+    }
+  };
+
+  const handleTeacherDrop = (teacher: any, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    const active = draggingWire || activeSocket;
+    if (!active || !school?.id) return;
+
+    handleQuickAllocate(active.classId, teacher.id, undefined, active.subjectId, false);
+    setDraggingWire(null);
+    setActiveSocket(null);
+  };
+
+  // Canvas Mouse Move (Drag wire or Pan canvas)
+  const handleCanvasMouseMove = (e: React.MouseEvent) => {
+    if (!canvasRef.current) return;
+    const canvasRect = canvasRef.current.getBoundingClientRect();
+
+    if (draggingWire) {
+      setDraggingWire((prev) =>
+        prev
+          ? {
+              ...prev,
+              currentX: e.clientX - canvasRect.left,
+              currentY: e.clientY - canvasRect.top,
+            }
+          : null
+      );
+    } else if (isPanning) {
+      setPan({
+        x: e.clientX - panStart.x,
+        y: e.clientY - panStart.y,
+      });
+    }
+  };
+
+  const handleCanvasMouseUp = () => {
+    if (draggingWire) setDraggingWire(null);
+    if (isPanning) setIsPanning(false);
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    // Start pan if clicking on empty canvas area
+    if (e.target === canvasRef.current || (e.target as HTMLElement).id === 'grid-background') {
+      setIsPanning(true);
+      setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    }
+  };
+
+  // Quick 1-click Allotment from Wire Drop
+  const handleQuickAllocate = async (
+    classId: string,
+    teacherId: string,
+    sectionId?: string,
+    subjectId?: string,
+    isClassTeacher = false
+  ) => {
+    if (!school?.id) return;
+    try {
+      await hierarchyService.allocateTeacher({
+        schoolId: school.id,
+        classId,
+        sectionId,
+        teacherId,
+        subjectId,
+        isClassTeacher,
+      });
+      onRefresh();
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || err.message || 'Failed to map teacher to subject');
+    }
+  };
+
+  // Remove teacher allocation
+  const handleRemoveAllocation = async (allocationId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    if (!confirm('Are you sure you want to unmap this subject allotment wire?')) return;
+    try {
+      await hierarchyService.deleteAllocation(allocationId, school?.id);
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Failed to disconnect wire');
+    }
+  };
 
   // Open add drawer
   const handleOpenAdd = (type: string, initialClassId?: string) => {
@@ -160,7 +371,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
     });
   };
 
-  // Create Staff / Student
+  // Create Staff / Class / Section
   const handleCreateMember = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!school?.id || !addingChildType) return;
@@ -171,7 +382,6 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 
     try {
       if (addingChildType === 'CLASS') {
-        // Create Class
         const secList = formData.sections
           .split(',')
           .map((s) => s.trim())
@@ -183,7 +393,6 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
           sections: secList.length > 0 ? secList : ['Section A'],
         });
 
-        // If teacher selected, map them as initial teacher
         if (formData.selectedTeacherId && newClass?.id) {
           const firstSection = newClass.sections?.[0];
           await hierarchyService.allocateTeacher({
@@ -195,7 +404,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
           });
         }
 
-        setFormSuccess(`Class ${formData.className} created and synchronized!`);
+        setFormSuccess(`Class ${formData.className} created with subject endpoints!`);
         setTimeout(() => {
           setAddingChildType(null);
           setFormSuccess(null);
@@ -220,26 +429,6 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
         return;
       }
 
-      if (addingChildType === 'ALLOCATE') {
-        if (!formData.classId || !formData.selectedTeacherId) {
-          throw new Error('Please select both a class and a teacher');
-        }
-        await hierarchyService.allocateTeacher({
-          schoolId: school.id,
-          classId: formData.classId,
-          sectionId: formData.sectionId || undefined,
-          teacherId: formData.selectedTeacherId,
-          isClassTeacher: formData.isClassTeacher,
-        });
-        setFormSuccess('Faculty connected to class successfully!');
-        setTimeout(() => {
-          setAddingChildType(null);
-          setFormSuccess(null);
-          onRefresh();
-        }, 800);
-        return;
-      }
-
       const payload: HierarchyMemberInput = {
         schoolId: school.id,
         type: addingChildType as any,
@@ -256,7 +445,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
       };
 
       await hierarchyService.createMember(payload);
-      setFormSuccess(`${addingChildType.replace('_', ' ')} added successfully and synced!`);
+      setFormSuccess(`${addingChildType.replace('_', ' ')} created and synced!`);
       setTimeout(() => {
         setAddingChildType(null);
         setFormSuccess(null);
@@ -269,42 +458,11 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
     }
   };
 
-  // Quick 1-click Allotment from Tree
-  const handleQuickAllocate = async (classId: string, teacherId: string, sectionId?: string, isClassTeacher = false) => {
-    if (!school?.id) return;
-    try {
-      await hierarchyService.allocateTeacher({
-        schoolId: school.id,
-        classId,
-        sectionId,
-        teacherId,
-        isClassTeacher,
-      });
-      setQuickAllotClassId(null);
-      setQuickAllotTeacherId(null);
-      setActiveConnectorSource(null);
-      onRefresh();
-    } catch (err: any) {
-      alert(err.response?.data?.error?.message || err.message || 'Failed to map teacher to class');
-    }
-  };
-
-  // Remove teacher allocation
-  const handleRemoveAllocation = async (allocationId: string, e?: React.MouseEvent) => {
-    e?.stopPropagation();
-    if (!confirm('Are you sure you want to unmap this faculty allotment?')) return;
-    try {
-      await hierarchyService.deleteAllocation(allocationId, school?.id);
-      onRefresh();
-    } catch (err: any) {
-      alert(err.message || 'Failed to unmap allocation');
-    }
-  };
-
   // Delete Class
   const handleDeleteClass = async (classId: string, className: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    if (!confirm(`Are you sure you want to delete class ${className}? All allotments and sections will be removed.`)) return;
+    if (!confirm(`Are you sure you want to delete class ${className}? All endpoints and allotments will be removed.`))
+      return;
     try {
       await hierarchyService.deleteClass(classId, school?.id);
       if (selectedNode?.id === classId) setSelectedNode(null);
@@ -326,65 +484,30 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
     }
   };
 
-  // Connector click handler (Click-to-Connect feature)
-  const handleNodeConnectorClick = (type: 'CLASS' | 'TEACHER', item: any, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!canAllocateTeachers) return;
-
-    if (!activeConnectorSource) {
-      // Start connection
-      setActiveConnectorSource({
-        type,
-        id: item.id,
-        name: type === 'CLASS' ? item.name : item.fullName,
-        classId: type === 'CLASS' ? item.id : undefined,
-        teacherId: type === 'TEACHER' ? item.id : undefined,
-      });
-      setConnectionMode(true);
-    } else if (activeConnectorSource.type !== type) {
-      // Complete connection between Class & Teacher!
-      const classId = activeConnectorSource.type === 'CLASS' ? activeConnectorSource.id : item.id;
-      const teacherId = activeConnectorSource.type === 'TEACHER' ? activeConnectorSource.id : item.id;
-      handleQuickAllocate(classId, teacherId, undefined, true);
-    } else {
-      // Switched selected source to another of same type
-      setActiveConnectorSource({
-        type,
-        id: item.id,
-        name: type === 'CLASS' ? item.name : item.fullName,
-        classId: type === 'CLASS' ? item.id : undefined,
-        teacherId: type === 'TEACHER' ? item.id : undefined,
-      });
-    }
-  };
-
-  // Check if a class and teacher are currently linked
-  const isClassConnectedToTeacher = (classItem: any, teacherItem: any) => {
-    const classAllocs = classItem?.teacherAllocations || [];
-    const teacherAllocs = teacherItem?.allocations || [];
-    return (
-      classAllocs.some((a: any) => a.teacherId === teacherItem.id || a.teacher?.id === teacherItem.id) ||
-      teacherAllocs.some((a: any) => a.classId === classItem.id || a.class?.id === classItem.id)
-    );
-  };
-
   return (
-    <div className="relative w-full flex flex-col xl:flex-row gap-6 min-h-[680px] select-none">
+    <div className="relative w-full flex flex-col xl:flex-row gap-6 min-h-[720px] select-none">
       {/* ========================================================================= */}
-      {/* LEFT / CENTER: VISUAL FLOWCHART GRAPH CANVAS                              */}
+      {/* LEFT / CENTER: INTERACTIVE FLOWCHART CANVAS WITH N8N / BLENDER WIRES      */}
       {/* ========================================================================= */}
-      <div className="flex-1 rounded-2xl border border-slate-200 dark:border-[#383838] bg-slate-50/60 dark:bg-[#1a1a1a] p-4 sm:p-6 lg:p-8 overflow-x-auto relative flex flex-col items-center shadow-xs">
-        {/* Subtle Canvas Dot Grid Pattern matching user attachment */}
+      <div
+        ref={canvasRef}
+        id="grid-background"
+        onMouseDown={handleCanvasMouseDown}
+        onMouseMove={handleCanvasMouseMove}
+        onMouseUp={handleCanvasMouseUp}
+        className="flex-1 rounded-2xl border border-slate-200 dark:border-[#383838] bg-[#161616] p-4 sm:p-6 lg:p-8 overflow-hidden relative flex flex-col items-center shadow-xs cursor-default h-[780px]"
+      >
+        {/* Subtle Canvas Dot Grid Pattern matching n8n / user attachment */}
         <div
-          className="absolute inset-0 pointer-events-none opacity-40 dark:opacity-20 rounded-2xl"
+          className="absolute inset-0 pointer-events-none opacity-25 rounded-2xl"
           style={{
             backgroundImage: 'radial-gradient(circle, #94a3b8 1.2px, transparent 1.2px)',
-            backgroundSize: '20px 20px',
+            backgroundSize: '24px 24px',
           }}
         />
 
-        {/* Canvas Toolbar & Connection Banner */}
-        <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3 mb-6 relative z-10">
+        {/* Top Canvas Toolbar */}
+        <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3 mb-4 relative z-30 pointer-events-auto">
           <div className="flex flex-wrap items-center gap-2">
             <span className="px-3 py-1 rounded-full text-[11px] font-bold tracking-wide uppercase bg-white dark:bg-[#282828] border border-slate-200 dark:border-[#383838] text-slate-700 dark:text-slate-300 shadow-xs flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -396,33 +519,33 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Interactive Connector Mode Toggle */}
-            {canAllocateTeachers && (
-              <button
-                type="button"
-                onClick={() => {
-                  setConnectionMode(!connectionMode);
-                  if (connectionMode) setActiveConnectorSource(null);
-                }}
-                className={`text-xs px-3 py-1.5 rounded-xl font-semibold flex items-center gap-1.5 transition-all shadow-xs ${
-                  connectionMode || activeConnectorSource
-                    ? 'bg-amber-500 text-white ring-2 ring-amber-500/30'
-                    : 'bg-white dark:bg-[#282828] border border-slate-200 dark:border-[#383838] text-slate-700 dark:text-slate-300 hover:text-amber-500'
-                }`}
-              >
-                <Zap className="w-3.5 h-3.5" />
-                <span>{connectionMode || activeConnectorSource ? 'Connection Mode Active' : 'Line Connect Mode'}</span>
-              </button>
+            {/* Active wire drag/click helper banner */}
+            {(draggingWire || activeSocket) && (
+              <span className="px-2.5 py-1 rounded-xl text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5 animate-pulse">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span>
+                  Drop or click on any Teacher node to connect wire!
+                </span>
+                <button
+                  onClick={() => {
+                    setDraggingWire(null);
+                    setActiveSocket(null);
+                  }}
+                  className="ml-1 hover:text-white"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
             )}
 
             {/* School Selector (for Super Admin) */}
             {isSuperAdmin && allSchools.length > 1 && (
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">Tenant:</span>
+                <span className="text-xs text-slate-400 font-medium">Tenant:</span>
                 <select
                   value={school?.id || ''}
                   onChange={(e) => onSelectSchool?.(e.target.value)}
-                  className="text-xs bg-white dark:bg-[#282828] border border-slate-200 dark:border-[#383838] rounded-xl px-2.5 py-1.5 font-semibold text-slate-800 dark:text-white shadow-xs focus:outline-none focus:ring-1 focus:ring-[#eb4438]"
+                  className="text-xs bg-[#242424] border border-[#383838] rounded-xl px-2.5 py-1.5 font-semibold text-white shadow-xs focus:outline-none focus:ring-1 focus:ring-[#eb4438]"
                 >
                   {allSchools.map((s: any) => (
                     <option key={s.id} value={s.id}>
@@ -435,34 +558,152 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
           </div>
         </div>
 
-        {/* Live Line Connection Instruction Prompt when active */}
-        {activeConnectorSource && (
-          <div className="w-full max-w-2xl mb-4 p-3 rounded-xl bg-gradient-to-r from-amber-500/10 via-amber-500/20 to-orange-500/10 border border-amber-400 dark:border-amber-600/50 flex items-center justify-between gap-3 text-xs text-amber-900 dark:text-amber-200 relative z-20 shadow-xs animate-in fade-in duration-200">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-ping shrink-0" />
-              <span className="font-bold">Connecting:</span>
-              <span className="font-semibold underline decoration-amber-500 truncate">
-                {activeConnectorSource.name} ({activeConnectorSource.type})
-              </span>
-              <ArrowRight className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              <span className="text-amber-700 dark:text-amber-300">
-                Click any {activeConnectorSource.type === 'CLASS' ? 'Teacher' : 'Class'} to draw line & allot
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setActiveConnectorSource(null)}
-              className="p-1 rounded-lg hover:bg-amber-500/20 text-amber-800 dark:text-amber-300 text-[11px] font-bold"
-            >
-              Cancel
-            </button>
-          </div>
-        )}
+        {/* ======================================================================= */}
+        {/* SVG BEZIER CABLE OVERLAY (BLENDER / N8N STYLE WIRES)                    */}
+        {/* ======================================================================= */}
+        <svg className="absolute inset-0 pointer-events-none w-full h-full z-20 overflow-visible">
+          <defs>
+            <style>{`
+              @keyframes cableFlow {
+                from { stroke-dashoffset: 24; }
+                to { stroke-dashoffset: 0; }
+              }
+              .flowing-cable {
+                animation: cableFlow 1.2s linear infinite;
+              }
+            `}</style>
+            <filter id="wire-glow" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="3" result="blur" />
+              <feComposite in="SourceGraphic" in2="blur" operator="over" />
+            </filter>
+          </defs>
+
+          {/* Render All Established Connection Wires */}
+          {wireConnections.map((wire) => {
+            const isHovered = hoveredWireId === wire.id;
+            const pathD = calculateBezierPath(wire.startX, wire.startY, wire.endX, wire.endY);
+            const midX = (wire.startX + wire.endX) / 2;
+            const midY = (wire.startY + wire.endY) / 2;
+
+            return (
+              <g key={wire.id} className="pointer-events-auto group/wire">
+                {/* Thick invisible hit area for easy hovering */}
+                <path
+                  d={pathD}
+                  fill="none"
+                  stroke="transparent"
+                  strokeWidth="20"
+                  onMouseEnter={() => setHoveredWireId(wire.id)}
+                  onMouseLeave={() => setHoveredWireId(null)}
+                  className="cursor-pointer"
+                />
+
+                {/* Outer Glow Highlight */}
+                {isHovered && (
+                  <path
+                    d={pathD}
+                    fill="none"
+                    stroke="#10b981"
+                    strokeWidth="6"
+                    opacity="0.5"
+                    filter="url(#wire-glow)"
+                  />
+                )}
+
+                {/* Solid Core Cable */}
+                <path
+                  d={pathD}
+                  fill="none"
+                  stroke={isHovered ? '#10b981' : '#eab308'}
+                  strokeWidth="2.5"
+                  className="transition-colors duration-150"
+                />
+
+                {/* Flowing Motion Dashes (Paused when isMotionPaused is true) */}
+                {!isMotionPaused && (
+                  <path
+                    d={pathD}
+                    fill="none"
+                    stroke="#ffffff"
+                    strokeWidth="2"
+                    strokeDasharray="4 10"
+                    opacity="0.85"
+                    className="flowing-cable"
+                  />
+                )}
+
+                {/* Sockets Dots firmly seated on node borders */}
+                <circle cx={wire.startX} cy={wire.startY} r="4" fill="#eab308" stroke="#ffffff" strokeWidth="1.5" />
+                <circle cx={wire.endX} cy={wire.endY} r="4" fill="#10b981" stroke="#ffffff" strokeWidth="1.5" />
+
+                {/* Hover Unlink Midpoint Pill */}
+                {isHovered && (
+                  <g
+                    transform={`translate(${midX}, ${midY})`}
+                    onClick={(e) => handleRemoveAllocation(wire.id, e as any)}
+                    className="cursor-pointer"
+                  >
+                    <rect
+                      x="-70"
+                      y="-12"
+                      width="140"
+                      height="24"
+                      rx="12"
+                      fill="#1e1e1e"
+                      stroke="#ef4444"
+                      strokeWidth="1.5"
+                      filter="drop-shadow(0 3px 6px rgba(0,0,0,0.5))"
+                    />
+                    <text
+                      x="0"
+                      y="4"
+                      textAnchor="middle"
+                      fill="#f87171"
+                      fontSize="10"
+                      fontWeight="bold"
+                    >
+                      ✕ Unlink {wire.subjectName}
+                    </text>
+                  </g>
+                )}
+              </g>
+            );
+          })}
+
+          {/* Active Live Dragging Wire following Cursor */}
+          {draggingWire && (
+            <g className="pointer-events-none">
+              <path
+                d={calculateBezierPath(
+                  draggingWire.startX,
+                  draggingWire.startY,
+                  draggingWire.currentX,
+                  draggingWire.currentY
+                )}
+                fill="none"
+                stroke="#eab308"
+                strokeWidth="3"
+                strokeDasharray="6 6"
+                className="flowing-cable"
+                filter="url(#wire-glow)"
+              />
+              <circle cx={draggingWire.startX} cy={draggingWire.startY} r="5" fill="#eab308" stroke="#ffffff" strokeWidth="2" />
+              <circle cx={draggingWire.currentX} cy={draggingWire.currentY} r="6" fill="#eab308" stroke="#ffffff" strokeWidth="2" />
+            </g>
+          )}
+        </svg>
 
         {/* ======================================================================= */}
-        {/* TREE STRUCTURE GRAPH                                                    */}
+        {/* ZOOMABLE / PANNABLE HIERARCHY TREE CONTENT CONTAINER                    */}
         {/* ======================================================================= */}
-        <div className="flex flex-col items-center w-full max-w-5xl relative z-10 py-2">
+        <div
+          style={{
+            transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`,
+            transformOrigin: '50% 0',
+            transition: isPanning ? 'none' : 'transform 0.15s ease-out',
+          }}
+          className="w-full flex flex-col items-center max-w-5xl relative z-10 py-2 pointer-events-auto"
+        >
           {/* LEVEL 0: SCHOOL TENANT NODE */}
           {!isHeadMaster && !isOfficeAdmin && !isTeacher && (
             <>
@@ -483,10 +724,10 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                     address: `${school?.profile?.city || ''}, ${school?.profile?.state || ''}`,
                   })
                 }
-                className={`w-80 p-4 rounded-2xl border transition-all duration-200 bg-white dark:bg-[#262626] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 group ${
+                className={`w-80 p-4 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 group ${
                   selectedNode?.type === 'SCHOOL'
                     ? 'border-[#eb4438] ring-2 ring-[#eb4438]/20 shadow-md'
-                    : 'border-slate-200 dark:border-[#383838] hover:border-slate-300 dark:hover:border-[#484848]'
+                    : 'border-[#383838] hover:border-[#484848]'
                 }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
@@ -497,7 +738,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                     <div className="text-[10px] font-bold uppercase tracking-wider text-[#eb4438] leading-tight">
                       Level 0 • School Tenant
                     </div>
-                    <div className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                    <div className="font-bold text-sm text-white truncate">
                       {school?.name || 'Oakridge International'}
                     </div>
                     <div className="text-[11px] text-slate-400 truncate">
@@ -510,20 +751,20 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                 </Badge>
               </div>
 
-              {/* Connector line from School down to Principal with interactive + button */}
+              {/* Connector line down to Principal with interactive + button */}
               <div className="flex flex-col items-center my-1 relative">
-                <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
+                <div className="w-0.5 h-6 bg-slate-600" />
                 {canAddPrincipal && (
                   <button
                     type="button"
                     onClick={() => handleOpenAdd('SCHOOL_ADMIN')}
                     title="Add Admin Principal"
-                    className="w-6 h-6 rounded-full bg-white dark:bg-[#2c2c2c] border border-slate-300 dark:border-slate-500 shadow-sm flex items-center justify-center text-slate-500 hover:text-white hover:bg-blue-600 hover:border-blue-600 transition-all -my-3 z-20 cursor-pointer active:scale-90"
+                    className="w-6 h-6 rounded-full bg-[#2c2c2c] border border-slate-500 shadow-sm flex items-center justify-center text-slate-300 hover:text-white hover:bg-blue-600 hover:border-blue-600 transition-all -my-3 z-20 cursor-pointer active:scale-90"
                   >
                     <Plus className="w-3.5 h-3.5" />
                   </button>
                 )}
-                <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
+                <div className="w-0.5 h-6 bg-slate-600" />
               </div>
             </>
           )}
@@ -543,10 +784,10 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         roleTitle: 'Institution Executive Head',
                       })
                     }
-                    className={`w-80 p-4 rounded-2xl border transition-all duration-200 bg-white dark:bg-[#262626] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
+                    className={`w-80 p-4 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
                       selectedNode?.id === p.id
                         ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-md'
-                        : 'border-slate-200 dark:border-[#383838]'
+                        : 'border-[#383838]'
                     }`}
                   >
                     <div className="flex items-center gap-3 min-w-0">
@@ -554,8 +795,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         <School className="w-5 h-5" />
                       </div>
                       <div className="min-w-0">
-                        <div className="text-[10px] font-bold text-blue-600 uppercase">Level 1 • Principal</div>
-                        <div className="font-bold text-sm text-slate-900 dark:text-white truncate">{p.fullName}</div>
+                        <div className="text-[10px] font-bold text-blue-400 uppercase">Level 1 • Principal</div>
+                        <div className="font-bold text-sm text-white truncate">{p.fullName}</div>
                         <div className="text-[11px] text-slate-400 truncate">{p.email}</div>
                       </div>
                     </div>
@@ -565,7 +806,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
               ) : (
                 <div
                   onClick={() => canAddPrincipal && handleOpenAdd('SCHOOL_ADMIN')}
-                  className="w-80 p-4 rounded-2xl border border-dashed border-slate-300 dark:border-slate-600 bg-white/50 dark:bg-[#242424] flex items-center justify-center gap-2 text-xs font-semibold text-slate-500 hover:text-blue-600 hover:border-blue-400 transition-colors cursor-pointer"
+                  className="w-80 p-4 rounded-2xl border border-dashed border-slate-600 bg-[#242424] flex items-center justify-center gap-2 text-xs font-semibold text-slate-400 hover:text-blue-400 hover:border-blue-400 transition-colors cursor-pointer"
                 >
                   <Plus className="w-4 h-4 text-blue-500" />
                   <span>Set Admin Principal</span>
@@ -574,11 +815,11 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 
               {/* Dual Branching Rail into Academic & Operations */}
               <div className="w-full flex flex-col items-center my-2 relative">
-                <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
-                <div className="w-2/3 h-0.5 bg-slate-300 dark:bg-slate-600" />
+                <div className="w-0.5 h-6 bg-slate-600" />
+                <div className="w-2/3 h-0.5 bg-slate-600" />
                 <div className="w-2/3 flex justify-between">
-                  <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
-                  <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
+                  <div className="w-0.5 h-6 bg-slate-600" />
+                  <div className="w-0.5 h-6 bg-slate-600" />
                 </div>
               </div>
             </>
@@ -594,7 +835,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
               {/* ----------------------------------------------------------------- */}
               <div className="lg:col-span-8 flex flex-col items-center">
                 {/* Academic Header & Leader Card */}
-                <div className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-600 dark:text-emerald-400 mb-1.5 flex items-center gap-1.5">
+                <div className="text-[10px] font-extrabold uppercase tracking-wider text-emerald-400 mb-1.5 flex items-center gap-1.5">
                   <GraduationCap className="w-4 h-4" />
                   <span>Academic Directorate & Curriculum Leadership</span>
                 </div>
@@ -611,10 +852,10 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           roleTitle: 'Academic Director & Curriculum Head',
                         })
                       }
-                      className={`w-full max-w-md p-3.5 rounded-2xl border transition-all duration-200 bg-white dark:bg-[#262626] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
+                      className={`w-full max-w-md p-3.5 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
                         selectedNode?.id === a.id
                           ? 'border-emerald-500 ring-2 ring-emerald-500/20 shadow-md'
-                          : 'border-slate-200 dark:border-[#383838]'
+                          : 'border-[#383838]'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
@@ -622,10 +863,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           <GraduationCap className="w-5 h-5" />
                         </div>
                         <div className="min-w-0">
-                          <div className="text-[10px] font-bold text-emerald-600 uppercase">Level 2 • Academic Head</div>
-                          <div className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
-                            {a.fullName}
-                          </div>
+                          <div className="text-[10px] font-bold text-emerald-400 uppercase">Level 2 • Academic Head</div>
+                          <div className="font-bold text-xs sm:text-sm text-white truncate">{a.fullName}</div>
                           <div className="text-[11px] text-slate-400 truncate">{a.email}</div>
                         </div>
                       </div>
@@ -635,7 +874,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                 ) : (
                   <div
                     onClick={() => canAddAcademic && handleOpenAdd('HEAD_MASTER')}
-                    className="w-full max-w-md p-3 rounded-2xl border border-dashed border-slate-300 dark:border-slate-600 bg-white/50 dark:bg-[#242424] flex items-center justify-center gap-2 text-xs font-semibold text-slate-500 hover:text-emerald-600 hover:border-emerald-400 transition-colors cursor-pointer"
+                    className="w-full max-w-md p-3 rounded-2xl border border-dashed border-slate-600 bg-[#242424] flex items-center justify-center gap-2 text-xs font-semibold text-slate-400 hover:text-emerald-400 hover:border-emerald-400 transition-colors cursor-pointer"
                   >
                     <Plus className="w-4 h-4 text-emerald-500" />
                     <span>Set Master Academic</span>
@@ -644,26 +883,26 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 
                 {/* Sub-connector from Academic to Classes & Teachers */}
                 <div className="flex flex-col items-center my-2 relative">
-                  <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
-                  <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
+                  <div className="w-0.5 h-6 bg-slate-600" />
+                  <div className="w-0.5 h-6 bg-slate-600" />
                 </div>
 
                 {/* --------------------------------------------------------------- */}
-                {/* INTERACTIVE ACADEMIC CLASSES & FACULTY ALLOTMENT TIER           */}
+                {/* NODE HUB: CLASSES (WITH SUBJECT SOCKETS) -> TEACHER NODES        */}
                 {/* --------------------------------------------------------------- */}
-                <div className="w-full rounded-2xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#232323] p-4 shadow-xs">
+                <div className="w-full rounded-2xl border border-[#383838] bg-[#1e1e1e] p-4 shadow-xs">
                   {/* Tier Subheader with Live Connection instructions */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 dark:border-[#333] mb-4 gap-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#303030] mb-4 gap-2">
                     <div className="flex items-center gap-2">
-                      <div className="w-7 h-7 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 flex items-center justify-center">
+                      <div className="w-7 h-7 rounded-lg bg-blue-950/70 text-blue-400 flex items-center justify-center">
                         <Layers2 className="w-4 h-4" />
                       </div>
                       <div>
-                        <h4 className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                          <span>Classes, Sections & Teacher Allotment Hub</span>
+                        <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                          <span>Classes & Subject Endpoints Hub</span>
                         </h4>
                         <p className="text-[10px] text-slate-400">
-                          Create academic classes and connect them with faculty educators directly via lines
+                          Drag yellow subject endpoint dots to connect cables directly to Faculty Teachers
                         </p>
                       </div>
                     </div>
@@ -692,20 +931,20 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                     </div>
                   </div>
 
-                  {/* Dual Grid: Left = Classes & Sections, Right = Teachers with live connectors */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* SUB-COLUMN 1: CLASSES & SECTIONS */}
-                    <div className="space-y-3">
+                  {/* Dual Column Layout: Left = Class Nodes with Subject Sockets, Right = Teacher Nodes with Input Sockets */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative">
+                    {/* SUB-COLUMN 1: CLASSES & THEIR SUBJECT ENDPOINTS */}
+                    <div className="space-y-4">
                       <div className="flex items-center justify-between px-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-600 dark:text-blue-400 flex items-center gap-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-blue-400 flex items-center gap-1">
                           <Layers className="w-3 h-3" />
-                          <span>Classes & Sections ({classes.length})</span>
+                          <span>Class Grade Nodes ({classes.length})</span>
                         </span>
                         {canManageClasses && (
                           <button
                             type="button"
                             onClick={() => handleOpenAdd('CLASS')}
-                            className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-0.5"
+                            className="text-[10px] font-bold text-blue-400 hover:underline flex items-center gap-0.5"
                           >
                             <Plus className="w-3 h-3" /> + New Class
                           </button>
@@ -713,69 +952,54 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                       </div>
 
                       {classes.map((cls: any) => {
-                        const isHovered = hoveredClassId === cls.id;
                         const isSelected = selectedNode?.id === cls.id;
-                        const isSourceSelected =
-                          activeConnectorSource?.type === 'CLASS' && activeConnectorSource.id === cls.id;
-                        const isTargetMatch =
-                          activeConnectorSource?.type === 'TEACHER' &&
-                          teachers.find((t: any) => t.id === activeConnectorSource.id)?.allocations?.some(
-                            (a: any) => a.classId === cls.id
-                          );
-                        const isConnectedToHoveredTeacher =
-                          hoveredTeacherId &&
-                          teachers.find((t: any) => t.id === hoveredTeacherId)?.allocations?.some(
-                            (a: any) => a.classId === cls.id
-                          );
-
-                        // All allocations for this class
                         const classAllocs = cls.teacherAllocations || [];
+
+                        // Retrieve class subjects (fallback to school subjects if not linked)
+                        const classSubs =
+                          cls.classSubjects?.length > 0
+                            ? cls.classSubjects.map((cs: any) => cs.subject)
+                            : subjects.length > 0
+                            ? subjects.slice(0, 6)
+                            : [
+                                { id: 'math', name: 'Mathematics', code: 'MATH-101' },
+                                { id: 'phy', name: 'Physics', code: 'PHY-101' },
+                                { id: 'eng', name: 'English Literature', code: 'ENG-101' },
+                                { id: 'chem', name: 'Chemistry', code: 'CHEM-101' },
+                                { id: 'cs', name: 'Computer Science', code: 'CS-101' },
+                                { id: 'sst', name: 'Social Studies', code: 'SST-101' },
+                              ];
 
                         return (
                           <div
                             key={cls.id}
-                            onMouseEnter={() => setHoveredClassId(cls.id)}
-                            onMouseLeave={() => setHoveredClassId(null)}
-                            onClick={() =>
-                              setSelectedNode({
-                                ...cls,
-                                type: 'CLASS',
-                                title: `Class Profile: ${cls.name}`,
-                                roleTitle: `Academic Grade Level • Code: ${cls.code}`,
-                              })
-                            }
-                            className={`p-3 rounded-xl border transition-all duration-200 bg-slate-50/70 dark:bg-[#282828] cursor-pointer relative group ${
+                            id={`node-class-${cls.id}`}
+                            className={`rounded-2xl border transition-all duration-200 bg-[#252525] p-3.5 shadow-sm relative ${
                               isSelected
-                                ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-md'
-                                : isSourceSelected
-                                ? 'border-amber-500 ring-2 ring-amber-500/30 bg-amber-500/5'
-                                : isConnectedToHoveredTeacher
-                                ? 'border-amber-500 ring-2 ring-amber-500/30'
-                                : 'border-slate-200 dark:border-[#383838] hover:border-blue-400'
+                                ? 'border-blue-500 ring-2 ring-blue-500/20'
+                                : 'border-[#383838] hover:border-slate-500'
                             }`}
                           >
                             {/* Class Header */}
-                            <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center justify-between mb-2 pb-2 border-b border-[#333]">
                               <div className="flex items-center gap-2 min-w-0">
-                                <span className="w-6 h-6 rounded-lg bg-blue-600 text-white font-bold text-[11px] flex items-center justify-center shrink-0">
+                                <span className="w-7 h-7 rounded-lg bg-blue-600 text-white font-bold text-xs flex items-center justify-center shrink-0">
                                   {cls.code?.slice(0, 3) || 'C'}
                                 </span>
                                 <div className="min-w-0">
-                                  <div className="font-bold text-xs text-slate-900 dark:text-white truncate">
-                                    {cls.name}
-                                  </div>
+                                  <div className="font-bold text-xs text-white truncate">{cls.name}</div>
                                   <div className="text-[10px] text-slate-400">
                                     {cls.sections?.reduce(
                                       (acc: number, s: any) => acc + (s._count?.students || 0),
                                       0
                                     )}{' '}
-                                    Students enrolled
+                                    Students • {classSubs.length} Subject Endpoints
                                   </div>
                                 </div>
                               </div>
 
                               <div className="flex items-center gap-1">
-                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-bold">
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-950 text-blue-300 font-bold">
                                   {cls.code}
                                 </span>
                                 {canManageClasses && (
@@ -783,7 +1007,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                                     type="button"
                                     onClick={(e) => handleDeleteClass(cls.id, cls.name, e)}
                                     title="Delete Class"
-                                    className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                                    className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-red-950/30 transition-colors"
                                   >
                                     <Trash2 className="w-3 h-3" />
                                   </button>
@@ -792,14 +1016,14 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                             </div>
 
                             {/* Section Pills */}
-                            <div className="flex flex-wrap items-center gap-1.5 mb-2.5">
+                            <div className="flex flex-wrap items-center gap-1.5 mb-3">
                               {cls.sections?.map((sec: any) => (
                                 <span
                                   key={sec.id}
-                                  className="text-[10px] px-2 py-0.5 rounded-md bg-white dark:bg-[#1f1f1f] border border-slate-200 dark:border-[#404040] text-slate-700 dark:text-slate-300 font-medium flex items-center gap-1"
+                                  className="text-[10px] px-2 py-0.5 rounded-md bg-[#1d1d1d] border border-[#3c3c3c] text-slate-300 font-medium flex items-center gap-1"
                                 >
                                   <span>{sec.name}</span>
-                                  <span className="text-[9px] text-slate-400 font-normal">
+                                  <span className="text-[9px] text-slate-500">
                                     ({sec._count?.students || 0})
                                   </span>
                                 </span>
@@ -811,63 +1035,87 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                                     e.stopPropagation();
                                     handleOpenAdd('SECTION', cls.id);
                                   }}
-                                  className="text-[10px] px-1.5 py-0.5 rounded-md border border-dashed border-blue-400 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 flex items-center gap-0.5 font-semibold"
+                                  className="text-[10px] px-1.5 py-0.5 rounded-md border border-dashed border-blue-500 text-blue-400 hover:bg-blue-950/30 flex items-center gap-0.5 font-semibold"
                                 >
                                   <Plus className="w-2.5 h-2.5" /> Sec
                                 </button>
                               )}
                             </div>
 
-                            {/* Mapped Faculty Badges & Connector Link */}
-                            <div className="pt-2 border-t border-slate-200/80 dark:border-[#383838] flex flex-wrap items-center justify-between gap-1.5">
-                              <div className="flex flex-wrap items-center gap-1 min-w-0">
-                                {classAllocs.length > 0 ? (
-                                  classAllocs.map((alloc: any) => {
-                                    const teacherName = alloc.teacher
-                                      ? `${alloc.teacher.firstName} ${alloc.teacher.lastName}`.trim()
-                                      : 'Teacher';
-                                    return (
-                                      <span
-                                        key={alloc.id}
-                                        title={`${teacherName} (${alloc.section?.name || 'All'} - ${alloc.isClassTeacher ? 'Class Teacher' : 'Teacher'})`}
-                                        className="text-[10px] pl-1.5 pr-1 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-300 font-medium flex items-center gap-1"
-                                      >
-                                        <BookOpen className="w-2.5 h-2.5 text-amber-600 shrink-0" />
-                                        <span className="truncate max-w-[90px]">{teacherName}</span>
-                                        {alloc.isClassTeacher && <span className="text-[9px]">★</span>}
-                                        {canAllocateTeachers && (
-                                          <button
-                                            type="button"
-                                            onClick={(e) => handleRemoveAllocation(alloc.id, e)}
-                                            className="hover:text-red-500 rounded p-0.5"
-                                            title="Unmap teacher"
-                                          >
-                                            <X className="w-2.5 h-2.5" />
-                                          </button>
-                                        )}
-                                      </span>
-                                    );
-                                  })
-                                ) : (
-                                  <span className="text-[10px] text-slate-400 italic">No faculty mapped</span>
-                                )}
+                            {/* =================================================== */}
+                            {/* SUBJECT ENDPOINTS LIST (EACH SUBJECT HAS AN ENDPOINT) */}
+                            {/* =================================================== */}
+                            <div className="space-y-1.5">
+                              <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 px-1">
+                                Output Sockets ({classSubs.length})
                               </div>
 
-                              {/* Connect / Map Action Button */}
-                              {canAllocateTeachers && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => handleNodeConnectorClick('CLASS', cls, e)}
-                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 transition-colors ${
-                                    isSourceSelected
-                                      ? 'bg-amber-500 text-white'
-                                      : 'bg-white dark:bg-[#333] border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400'
-                                  }`}
-                                >
-                                  <Zap className="w-2.5 h-2.5" />
-                                  <span>{isSourceSelected ? 'Selected' : 'Map'}</span>
-                                </button>
-                              )}
+                              {classSubs.map((sub: any) => {
+                                const alloc = classAllocs.find(
+                                  (a: any) => a.subjectId === sub.id || a.subject?.id === sub.id
+                                );
+                                const isSocketActive =
+                                  activeSocket?.classId === cls.id && activeSocket?.subjectId === sub.id;
+                                const teacherName = alloc?.teacher
+                                  ? `${alloc.teacher.firstName} ${alloc.teacher.lastName}`.trim()
+                                  : 'Faculty';
+
+                                return (
+                                  <div
+                                    key={sub.id}
+                                    className="group/sub flex items-center justify-between py-1.5 px-2 rounded-xl bg-[#1d1d1d] border border-[#363636] hover:border-amber-500/60 transition-colors relative"
+                                  >
+                                    <div className="flex items-center gap-1.5 min-w-0 pr-3">
+                                      <span
+                                        className={`w-2 h-2 rounded-full shrink-0 ${
+                                          alloc ? 'bg-emerald-400' : 'bg-amber-400'
+                                        }`}
+                                      />
+                                      <span className="text-[11px] font-medium text-slate-200 truncate">
+                                        {sub.name}
+                                      </span>
+                                    </div>
+
+                                    {/* Mapped Teacher Tag or Unassigned */}
+                                    <div className="flex items-center gap-1 shrink-0 pr-2">
+                                      {alloc ? (
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/50 border border-emerald-800 text-emerald-300 flex items-center gap-1 font-semibold">
+                                          <span>{teacherName}</span>
+                                          {canAllocateTeachers && (
+                                            <button
+                                              type="button"
+                                              onClick={(e) => handleRemoveAllocation(alloc.id, e)}
+                                              title="Disconnect cable"
+                                              className="hover:text-red-400"
+                                            >
+                                              <X className="w-2.5 h-2.5" />
+                                            </button>
+                                          )}
+                                        </span>
+                                      ) : (
+                                        <span className="text-[9px] text-slate-500 italic">Drag to map</span>
+                                      )}
+                                    </div>
+
+                                    {/* CIRCULAR OUTPUT SOCKET ENDPOINT (BLENDER / N8N STYLE) */}
+                                    <div
+                                      id={`socket-out-${cls.id}-${sub.id}`}
+                                      title="Drag this endpoint dot to connect a wire to a teacher"
+                                      onMouseDown={(e) => handleStartDrag(cls, sub, e)}
+                                      onClick={(e) => handleSocketClick(cls, sub, e)}
+                                      className={`absolute -right-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-[#1d1d1d] cursor-crosshair transition-all hover:scale-135 shadow-sm z-30 flex items-center justify-center ${
+                                        alloc
+                                          ? 'bg-emerald-400 ring-2 ring-emerald-400/40'
+                                          : isSocketActive
+                                          ? 'bg-amber-400 ring-4 ring-amber-400/70 scale-125 animate-pulse'
+                                          : 'bg-yellow-400 hover:bg-yellow-300 ring-2 ring-yellow-400/40 animate-pulse'
+                                      }`}
+                                    >
+                                      <span className="w-1.5 h-1.5 rounded-full bg-[#1a1a1a]" />
+                                    </div>
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         );
@@ -876,25 +1124,25 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                       {classes.length === 0 && (
                         <div
                           onClick={() => canManageClasses && handleOpenAdd('CLASS')}
-                          className="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 text-center text-xs text-slate-400 hover:text-blue-500 hover:border-blue-400 cursor-pointer"
+                          className="p-6 rounded-2xl border border-dashed border-slate-600 text-center text-xs text-slate-400 hover:text-blue-400 hover:border-blue-400 cursor-pointer"
                         >
                           + Create First Academic Class
                         </div>
                       )}
                     </div>
 
-                    {/* SUB-COLUMN 2: TEACHER FACULTY */}
-                    <div className="space-y-3">
+                    {/* SUB-COLUMN 2: TEACHING FACULTY NODES (WITH RECEIVING INPUT SOCKETS) */}
+                    <div className="space-y-4">
                       <div className="flex items-center justify-between px-1">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400 flex items-center gap-1">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-rose-400 flex items-center gap-1">
                           <BookOpen className="w-3 h-3" />
-                          <span>Teaching Faculty ({teachers.length})</span>
+                          <span>Teaching Faculty Nodes ({teachers.length})</span>
                         </span>
                         {canAddTeacher && (
                           <button
                             type="button"
                             onClick={() => handleOpenAdd('TEACHER')}
-                            className="text-[10px] font-bold text-rose-600 hover:underline flex items-center gap-0.5"
+                            className="text-[10px] font-bold text-rose-400 hover:underline flex items-center gap-0.5"
                           >
                             <Plus className="w-3 h-3" /> + Add Teacher
                           </button>
@@ -902,100 +1150,103 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                       </div>
 
                       {teachers.map((t: any) => {
-                        const isHovered = hoveredTeacherId === t.id;
                         const isSelected = selectedNode?.id === t.id;
-                        const isSourceSelected =
-                          activeConnectorSource?.type === 'TEACHER' && activeConnectorSource.id === t.id;
-                        const isConnectedToHoveredClass =
-                          hoveredClassId && t.allocations?.some((a: any) => a.classId === hoveredClassId);
+                        const isTargetHovered = draggingWire || activeSocket;
 
                         return (
                           <div
                             key={t.id}
-                            onMouseEnter={() => setHoveredTeacherId(t.id)}
-                            onMouseLeave={() => setHoveredTeacherId(null)}
-                            onClick={() =>
-                              setSelectedNode({
-                                ...t,
-                                type: 'TEACHER',
-                                title: 'Faculty Teacher Profile',
-                                roleTitle: 'Classroom Educator & Student Evaluator',
-                              })
-                            }
-                            className={`p-3 rounded-xl border transition-all duration-200 bg-slate-50/70 dark:bg-[#282828] cursor-pointer relative group ${
+                            id={`node-teacher-${t.id}`}
+                            onMouseUp={(e) => handleTeacherDrop(t, e)}
+                            onClick={(e) => {
+                              if (activeSocket || draggingWire) {
+                                handleTeacherDrop(t, e);
+                              } else {
+                                setSelectedNode({
+                                  ...t,
+                                  type: 'TEACHER',
+                                  title: 'Faculty Teacher Profile',
+                                  roleTitle: 'Classroom Educator & Student Evaluator',
+                                });
+                              }
+                            }}
+                            className={`rounded-2xl border transition-all duration-200 bg-[#252525] p-3.5 shadow-sm relative ${
                               isSelected
-                                ? 'border-rose-500 ring-2 ring-rose-500/20 shadow-md'
-                                : isSourceSelected
-                                ? 'border-amber-500 ring-2 ring-amber-500/30 bg-amber-500/5'
-                                : isConnectedToHoveredClass
-                                ? 'border-amber-500 ring-2 ring-amber-500/30'
-                                : 'border-slate-200 dark:border-[#383838] hover:border-rose-400'
+                                ? 'border-rose-500 ring-2 ring-rose-500/20'
+                                : isTargetHovered
+                                ? 'border-amber-400 ring-2 ring-amber-400/40 bg-amber-950/20'
+                                : 'border-[#383838] hover:border-slate-500'
                             }`}
                           >
+                            {/* CIRCULAR RECEIVING INPUT SOCKET ON LEFT EDGE */}
+                            <div
+                              id={`socket-in-${t.id}`}
+                              title="Drop wire here to allot subject to this teacher"
+                              onMouseUp={(e) => handleTeacherDrop(t, e)}
+                              className={`absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-[#252525] cursor-pointer transition-all hover:scale-135 shadow-sm z-30 flex items-center justify-center ${
+                                isTargetHovered
+                                  ? 'bg-amber-400 ring-4 ring-amber-400/80 scale-125 animate-pulse'
+                                  : t.allocations?.length > 0
+                                  ? 'bg-emerald-400 ring-2 ring-emerald-400/40'
+                                  : 'bg-slate-400 hover:bg-amber-400 ring-1 ring-slate-400/40'
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#1a1a1a]" />
+                            </div>
+
                             {/* Teacher Header */}
-                            <div className="flex items-center justify-between mb-2">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-rose-500 to-pink-600 text-white flex items-center justify-center font-bold text-xs shrink-0">
+                            <div className="flex items-center justify-between mb-2 pb-2 border-b border-[#333]">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-sm">
                                   {t.fullName?.[0] || 'T'}
                                 </div>
                                 <div className="min-w-0">
-                                  <div className="font-bold text-xs text-slate-900 dark:text-white truncate">
-                                    {t.fullName}
-                                  </div>
+                                  <div className="font-bold text-xs text-white truncate">{t.fullName}</div>
                                   <div className="text-[10px] text-slate-400 truncate">
                                     {t.teacherCode} • {t.designation || 'Faculty'}
                                   </div>
                                 </div>
                               </div>
 
-                              <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-300 shrink-0">
+                              <span className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-rose-950/60 text-rose-300 shrink-0 border border-rose-900/60">
                                 Faculty
                               </span>
                             </div>
 
-                            {/* Mapped Classes Tags */}
-                            <div className="pt-2 border-t border-slate-200/80 dark:border-[#383838] flex flex-wrap items-center justify-between gap-1.5">
-                              <div className="flex flex-wrap items-center gap-1 min-w-0">
-                                {t.allocations?.length > 0 ? (
-                                  t.allocations.map((alloc: any) => (
+                            {/* Connected Subject Wires / Badges */}
+                            <div className="space-y-1.5">
+                              <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                                Allotted Subjects ({t.allocations?.length || 0})
+                              </div>
+
+                              {t.allocations?.length > 0 ? (
+                                <div className="flex flex-wrap gap-1.5">
+                                  {t.allocations.map((alloc: any) => (
                                     <span
                                       key={alloc.id}
-                                      className="text-[10px] pl-1.5 pr-1 py-0.5 rounded-md bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300 font-medium flex items-center gap-1"
+                                      className="text-[10px] pl-2 pr-1.5 py-0.5 rounded-lg bg-emerald-950/50 border border-emerald-800 text-emerald-300 font-semibold flex items-center gap-1.5"
                                     >
+                                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                                       <span>
-                                        {alloc.class?.name || 'Class'} ({alloc.section?.name || 'Sec'})
+                                        {alloc.class?.name || 'Class'} • {alloc.subject?.name || 'Subject'}
                                       </span>
                                       {canAllocateTeachers && (
                                         <button
                                           type="button"
                                           onClick={(e) => handleRemoveAllocation(alloc.id, e)}
-                                          className="hover:text-red-500 rounded p-0.5"
-                                          title="Unmap class"
+                                          title="Unlink subject wire"
+                                          className="hover:text-red-400 p-0.5"
                                         >
                                           <X className="w-2.5 h-2.5" />
                                         </button>
                                       )}
                                     </span>
-                                  ))
-                                ) : (
-                                  <span className="text-[10px] text-slate-400 italic">No class allotted</span>
-                                )}
-                              </div>
-
-                              {/* Connect / Map Action Button */}
-                              {canAllocateTeachers && (
-                                <button
-                                  type="button"
-                                  onClick={(e) => handleNodeConnectorClick('TEACHER', t, e)}
-                                  className={`text-[10px] font-bold px-2 py-0.5 rounded-md flex items-center gap-1 transition-colors ${
-                                    isSourceSelected
-                                      ? 'bg-amber-500 text-white'
-                                      : 'bg-white dark:bg-[#333] border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:text-amber-600 hover:border-amber-400'
-                                  }`}
-                                >
-                                  <Zap className="w-2.5 h-2.5" />
-                                  <span>{isSourceSelected ? 'Selected' : 'Allot'}</span>
-                                </button>
+                                  ))}
+                                </div>
+                              ) : (
+                                <div className="text-[10px] text-slate-500 italic py-1">
+                                  Drop any class subject wire here to allot
+                                </div>
                               )}
                             </div>
                           </div>
@@ -1005,7 +1256,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                       {teachers.length === 0 && (
                         <div
                           onClick={() => canAddTeacher && handleOpenAdd('TEACHER')}
-                          className="p-4 rounded-xl border border-dashed border-slate-300 dark:border-slate-600 text-center text-xs text-slate-400 hover:text-rose-500 hover:border-rose-400 cursor-pointer"
+                          className="p-6 rounded-2xl border border-dashed border-slate-600 text-center text-xs text-slate-400 hover:text-rose-400 hover:border-rose-400 cursor-pointer"
                         >
                           + Add First Teacher Faculty
                         </div>
@@ -1019,7 +1270,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
               {/* BRANCH B: OPERATIONS & FINANCE (COLS 4/12)                         */}
               {/* ----------------------------------------------------------------- */}
               <div className="lg:col-span-4 flex flex-col items-center">
-                <div className="text-[10px] font-extrabold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1.5 flex items-center gap-1.5">
+                <div className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400 mb-1.5 flex items-center gap-1.5">
                   <Briefcase className="w-4 h-4" />
                   <span>Operations & Finance</span>
                 </div>
@@ -1036,10 +1287,10 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           roleTitle: 'Finance, Fee Collections & Admissions',
                         })
                       }
-                      className={`w-full p-3.5 rounded-2xl border transition-all duration-200 bg-white dark:bg-[#262626] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
+                      className={`w-full p-3.5 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
                         selectedNode?.id === f.id
                           ? 'border-amber-500 ring-2 ring-amber-500/20 shadow-md'
-                          : 'border-slate-200 dark:border-[#383838]'
+                          : 'border-[#383838]'
                       }`}
                     >
                       <div className="flex items-center gap-3 min-w-0">
@@ -1047,10 +1298,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           <Briefcase className="w-5 h-5" />
                         </div>
                         <div className="min-w-0">
-                          <div className="text-[10px] font-bold text-amber-600 uppercase">Level 2 • Finance</div>
-                          <div className="font-bold text-xs sm:text-sm text-slate-900 dark:text-white truncate">
-                            {f.fullName}
-                          </div>
+                          <div className="text-[10px] font-bold text-amber-400 uppercase">Level 2 • Finance</div>
+                          <div className="font-bold text-xs sm:text-sm text-white truncate">{f.fullName}</div>
                           <div className="text-[11px] text-slate-400 truncate">{f.email}</div>
                         </div>
                       </div>
@@ -1060,7 +1309,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                 ) : (
                   <div
                     onClick={() => canAddFinance && handleOpenAdd('OFFICE_ADMIN')}
-                    className="w-full p-3 rounded-2xl border border-dashed border-slate-300 dark:border-slate-600 bg-white/50 dark:bg-[#242424] flex items-center justify-center gap-2 text-xs font-semibold text-slate-500 hover:text-amber-600 hover:border-amber-400 transition-colors cursor-pointer"
+                    className="w-full p-3 rounded-2xl border border-dashed border-slate-600 bg-[#242424] flex items-center justify-center gap-2 text-xs font-semibold text-slate-400 hover:text-amber-400 hover:border-amber-400 transition-colors cursor-pointer"
                   >
                     <Plus className="w-4 h-4 text-amber-500" />
                     <span>Set Office Finance</span>
@@ -1069,29 +1318,29 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 
                 {/* Sub-connector down into responsibilities */}
                 <div className="flex flex-col items-center my-2 relative">
-                  <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
-                  <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
+                  <div className="w-0.5 h-6 bg-slate-600" />
+                  <div className="w-0.5 h-6 bg-slate-600" />
                 </div>
 
                 {/* SYNCHRONIZED RESPONSIBILITIES CARD */}
-                <div className="w-full p-4 rounded-2xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] shadow-xs space-y-2.5">
-                  <div className="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                <div className="w-full p-4 rounded-2xl border border-[#383838] bg-[#242424] shadow-xs space-y-2.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
                     <Shield className="w-3.5 h-3.5" />
                     <span>Synchronized Responsibilities</span>
                   </div>
-                  <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center justify-between">
+                  <div className="text-xs text-slate-300 flex items-center justify-between">
                     <span>Student Invoicing:</span>
-                    <span className="font-semibold text-emerald-600">Active</span>
+                    <span className="font-semibold text-emerald-400">Active</span>
                   </div>
-                  <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center justify-between">
+                  <div className="text-xs text-slate-300 flex items-center justify-between">
                     <span>Digital Records Archival:</span>
-                    <span className="font-semibold text-blue-600">S3 Synced</span>
+                    <span className="font-semibold text-blue-400">S3 Synced</span>
                   </div>
-                  <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center justify-between">
+                  <div className="text-xs text-slate-300 flex items-center justify-between">
                     <span>Total Classes Managed:</span>
-                    <span className="font-semibold text-indigo-600">{classes.length} Classes</span>
+                    <span className="font-semibold text-indigo-400">{classes.length} Classes</span>
                   </div>
-                  <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center justify-between">
+                  <div className="text-xs text-slate-300 flex items-center justify-between">
                     <span>Student Admissions:</span>
                     <span className="font-semibold text-[#eb4438]">{students.length} Enrolled</span>
                   </div>
@@ -1102,14 +1351,14 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 
           {/* TEACHER FACULTY VIEW (WHEN LOGGED IN AS TEACHER) */}
           {isTeacher && (
-            <div className="w-80 p-4 rounded-2xl border border-rose-500 bg-white dark:bg-[#262626] shadow-sm mb-4">
+            <div className="w-80 p-4 rounded-2xl border border-rose-500 bg-[#242424] shadow-sm mb-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-rose-500 text-white flex items-center justify-center">
                   <BookOpen className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="text-[10px] font-bold uppercase text-rose-500">Faculty Educator</div>
-                  <div className="font-bold text-sm text-slate-900 dark:text-white">{user?.fullName}</div>
+                  <div className="text-[10px] font-bold uppercase text-rose-400">Faculty Educator</div>
+                  <div className="font-bold text-sm text-white">{user?.fullName}</div>
                   <div className="text-[11px] text-slate-400">{user?.email}</div>
                 </div>
               </div>
@@ -1120,38 +1369,37 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
           {/* LEVEL 4: ENROLLED STUDENTS (CONVERGENT BOTTOMLINE NODE)                */}
           {/* ===================================================================== */}
           <div className="w-full flex flex-col items-center mt-6">
-            {/* Connector into Students */}
             <div className="flex flex-col items-center my-1 relative">
-              <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
+              <div className="w-0.5 h-6 bg-slate-600" />
               {canAddStudent && (
                 <button
                   type="button"
                   onClick={() => handleOpenAdd('STUDENT')}
                   title="Add Enrolled Student"
-                  className="w-7 h-7 rounded-full bg-white dark:bg-[#2c2c2c] border border-slate-300 dark:border-slate-500 shadow-sm flex items-center justify-center text-slate-500 hover:text-white hover:bg-indigo-600 hover:border-indigo-600 transition-all -my-3.5 z-20 cursor-pointer active:scale-90"
+                  className="w-7 h-7 rounded-full bg-[#2c2c2c] border border-slate-500 shadow-sm flex items-center justify-center text-slate-300 hover:text-white hover:bg-indigo-600 hover:border-indigo-600 transition-all -my-3.5 z-20 cursor-pointer active:scale-90"
                 >
                   <Plus className="w-4 h-4" />
                 </button>
               )}
-              <div className="w-0.5 h-6 bg-slate-300 dark:bg-slate-600" />
+              <div className="w-0.5 h-6 bg-slate-600" />
             </div>
 
             {/* Students Container Card */}
-            <div className="w-full max-w-4xl rounded-2xl border border-indigo-200 dark:border-indigo-950/60 bg-white dark:bg-[#242424] p-5 shadow-xs">
+            <div className="w-full max-w-4xl rounded-2xl border border-indigo-950/60 bg-[#242424] p-5 shadow-xs">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
                 <div className="flex items-center gap-2.5">
                   <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white flex items-center justify-center shadow-sm">
                     <Users className="w-5 h-5" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
                       <span>Enrolled Students Roster</span>
-                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 font-semibold">
+                      <span className="text-[11px] px-2 py-0.5 rounded-full bg-indigo-950/50 text-indigo-400 font-semibold border border-indigo-900/60">
                         {students.length} Total
                       </span>
                     </h3>
                     <p className="text-[11px] text-slate-400">
-                      Managed by Faculty & synchronized across Principal, Academic & Finance
+                      Synchronized across Principal, Academic, Finance & Faculty
                     </p>
                   </div>
                 </div>
@@ -1164,7 +1412,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                       placeholder="Search students..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="text-xs bg-slate-50 dark:bg-[#1f1f1f] border border-slate-200 dark:border-[#383838] rounded-xl pl-8 pr-2.5 py-1 text-slate-800 dark:text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 w-36 sm:w-48"
+                      className="text-xs bg-[#1f1f1f] border border-[#383838] rounded-xl pl-8 pr-2.5 py-1 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 w-36 sm:w-48"
                     />
                   </div>
 
@@ -1193,20 +1441,18 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         roleTitle: `Enrolled Student • ${s.className} (${s.sectionName})`,
                       })
                     }
-                    className={`p-2.5 rounded-xl border transition-all duration-200 bg-slate-50/70 dark:bg-[#292929] cursor-pointer flex items-center justify-between gap-2 ${
+                    className={`p-2.5 rounded-xl border transition-all duration-200 bg-[#292929] cursor-pointer flex items-center justify-between gap-2 ${
                       selectedNode?.id === s.id
                         ? 'border-indigo-500 ring-2 ring-indigo-500/20'
-                        : 'border-slate-200 dark:border-[#383838] hover:border-indigo-300'
+                        : 'border-[#383838] hover:border-indigo-400'
                     }`}
                   >
                     <div className="flex items-center gap-2 min-w-0">
-                      <div className="w-7 h-7 rounded-lg bg-indigo-100 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 font-bold text-xs flex items-center justify-center shrink-0">
+                      <div className="w-7 h-7 rounded-lg bg-indigo-950 text-indigo-400 font-bold text-xs flex items-center justify-center shrink-0">
                         {s.fullName?.[0] || 'S'}
                       </div>
                       <div className="min-w-0">
-                        <div className="font-semibold text-xs text-slate-900 dark:text-white truncate">
-                          {s.fullName}
-                        </div>
+                        <div className="font-semibold text-xs text-white truncate">{s.fullName}</div>
                         <div className="text-[10px] text-slate-400 truncate">
                           {s.studentCode} • {s.className} ({s.sectionName})
                         </div>
@@ -1227,19 +1473,75 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
             </div>
           </div>
         </div>
+
+        {/* ========================================================================= */}
+        {/* N8N-STYLE FLOATING CANVAS CONTROLS (EXACTLY MATCHING ATTACHED IMAGE)      */}
+        {/* ========================================================================= */}
+        <div className="absolute bottom-6 left-6 z-30 flex items-center rounded-2xl bg-[#1c1c1c]/95 backdrop-blur-md border border-[#383838] shadow-2xl px-2 py-1 text-slate-300 select-none">
+          <button
+            type="button"
+            onClick={handleZoomOut}
+            title="Zoom Out"
+            className="w-8 h-8 flex items-center justify-center font-bold text-base hover:text-white hover:bg-[#2c2c2c] rounded-xl transition-colors active:scale-95"
+          >
+            -
+          </button>
+
+          <button
+            type="button"
+            onClick={handleFitAll}
+            title="Fit all nodes in view"
+            className="px-3 py-1.5 font-semibold text-xs hover:text-white hover:bg-[#2c2c2c] rounded-xl transition-colors border-x border-[#333333] mx-1 active:scale-95 flex items-center gap-1.5"
+          >
+            <span>Fit all</span>
+            <span className="text-[10px] text-slate-500 font-mono">
+              {Math.round(zoom * 100)}%
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={handleZoomIn}
+            title="Zoom In"
+            className="w-8 h-8 flex items-center justify-center font-bold text-base hover:text-white hover:bg-[#2c2c2c] rounded-xl transition-colors active:scale-95"
+          >
+            +
+          </button>
+
+          <div className="w-px h-5 bg-[#333333] mx-1" />
+
+          <button
+            type="button"
+            onClick={() => setIsMotionPaused(!isMotionPaused)}
+            title={isMotionPaused ? 'Resume flowing cable motion' : 'Pause flowing cable motion'}
+            className="flex items-center gap-1.5 px-3 py-1.5 font-semibold text-xs hover:text-white hover:bg-[#2c2c2c] rounded-xl transition-colors active:scale-95 text-slate-200"
+          >
+            {isMotionPaused ? (
+              <>
+                <Play className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
+                <span>Play motion</span>
+              </>
+            ) : (
+              <>
+                <Pause className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+                <span>Pause motion</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* ========================================================================= */}
-      {/* RIGHT SIDE PANEL: NODE DETAILS & ADD ACTIONS (NON-POPUP SPLIT SCREEN)     */}
+      {/* RIGHT SIDE PANEL: DETAILS & ACTIONS (NON-POPUP SPLIT SCREEN)              */}
       {/* ========================================================================= */}
       {(selectedNode || addingChildType) && (
-        <div className="w-full xl:w-96 rounded-2xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] p-5 shadow-sm shrink-0 flex flex-col justify-between animate-in slide-in-from-right duration-200">
+        <div className="w-full xl:w-96 rounded-2xl border border-[#383838] bg-[#242424] p-5 shadow-sm shrink-0 flex flex-col justify-between animate-in slide-in-from-right duration-200">
           {/* 1. ADD MEMBER / CLASS / SECTION FORM VIEW */}
           {addingChildType && (
             <div>
-              <div className="flex items-center justify-between pb-3.5 border-b border-slate-100 dark:border-[#383838] mb-4">
+              <div className="flex items-center justify-between pb-3.5 border-b border-[#383838] mb-4">
                 <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  <h3 className="text-sm font-bold text-white">
                     {addingChildType === 'CLASS'
                       ? 'Add Academic Class'
                       : addingChildType === 'SECTION'
@@ -1253,19 +1555,19 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                 <button
                   type="button"
                   onClick={() => setAddingChildType(null)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#333333]"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-[#333333]"
                 >
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
               {formError && (
-                <div className="mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 text-xs text-red-600 dark:text-red-400">
+                <div className="mb-4 p-3 rounded-xl bg-red-950/40 border border-red-900 text-xs text-red-400">
                   {formError}
                 </div>
               )}
               {formSuccess && (
-                <div className="mb-4 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900 text-xs text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                <div className="mb-4 p-3 rounded-xl bg-emerald-950/40 border border-emerald-900 text-xs text-emerald-400 flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4" />
                   <span>{formSuccess}</span>
                 </div>
@@ -1287,11 +1589,13 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           setFormData({
                             ...formData,
                             className: e.target.value,
-                            classCode: formData.classCode || e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 5),
+                            classCode:
+                              formData.classCode ||
+                              e.target.value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 5),
                           })
                         }
                         placeholder="e.g. Grade 11, Class 6, KG 2"
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                       />
                     </div>
 
@@ -1305,7 +1609,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         value={formData.classCode}
                         onChange={(e) => setFormData({ ...formData, classCode: e.target.value })}
                         placeholder="e.g. G11, C6, KG2"
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white font-mono"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white font-mono"
                       />
                     </div>
 
@@ -1318,26 +1622,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         value={formData.sections}
                         onChange={(e) => setFormData({ ...formData, sections: e.target.value })}
                         placeholder="Section A, Section B"
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                       />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">
-                        Initial Class Teacher (Optional)
-                      </label>
-                      <select
-                        value={formData.selectedTeacherId}
-                        onChange={(e) => setFormData({ ...formData, selectedTeacherId: e.target.value })}
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
-                      >
-                        <option value="">-- No initial teacher --</option>
-                        {teachers.map((t: any) => (
-                          <option key={t.id} value={t.id}>
-                            {t.fullName} ({t.teacherCode})
-                          </option>
-                        ))}
-                      </select>
                     </div>
                   </>
                 ) : addingChildType === 'SECTION' ? (
@@ -1349,7 +1635,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                       <select
                         value={formData.classId}
                         onChange={(e) => setFormData({ ...formData, classId: e.target.value })}
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white mb-2"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white mb-2"
                       >
                         {classes.map((cls: any) => (
                           <option key={cls.id} value={cls.id}>
@@ -1369,7 +1655,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         value={formData.sectionName}
                         onChange={(e) => setFormData({ ...formData, sectionName: e.target.value })}
                         placeholder="e.g. Section C"
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                       />
                     </div>
                   </>
@@ -1386,7 +1672,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           value={formData.firstName}
                           onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
                           placeholder="e.g. Aarav"
-                          className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                          className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                         />
                       </div>
                       <div>
@@ -1399,7 +1685,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           value={formData.lastName}
                           onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
                           placeholder="e.g. Sharma"
-                          className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                          className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                         />
                       </div>
                     </div>
@@ -1418,7 +1704,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                             sectionId: c?.sections?.[0]?.id || '',
                           });
                         }}
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white mb-2"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white mb-2"
                       >
                         {classes.map((cls: any) => (
                           <option key={cls.id} value={cls.id}>
@@ -1437,7 +1723,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         value={formData.email}
                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                         placeholder="student@school.edu"
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                       />
                     </div>
 
@@ -1450,7 +1736,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         value={formData.phone}
                         onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                         placeholder="+91 98765 43210"
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                       />
                     </div>
                   </>
@@ -1466,7 +1752,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         value={formData.fullName}
                         onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
                         placeholder="e.g. Dr. Arthur Pendelton"
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                       />
                     </div>
 
@@ -1480,7 +1766,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         value={formData.email}
                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                         placeholder="name@oakridge.example.edu"
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                       />
                     </div>
 
@@ -1493,7 +1779,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         value={formData.phone}
                         onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                         placeholder="+91 98765 43210"
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                       />
                     </div>
 
@@ -1507,7 +1793,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           value={formData.designation}
                           onChange={(e) => setFormData({ ...formData, designation: e.target.value })}
                           placeholder="e.g. Senior Mathematics Teacher"
-                          className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white"
+                          className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white"
                         />
                       </div>
                     )}
@@ -1520,7 +1806,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         type="text"
                         value={formData.password}
                         onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-200 dark:border-[#383838] bg-slate-50 dark:bg-[#1f1f1f] text-slate-900 dark:text-white font-mono"
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-[#383838] bg-[#1f1f1f] text-white font-mono"
                       />
                     </div>
                   </>
@@ -1547,9 +1833,9 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
           {/* 2. NODE PROFILE DETAILS VIEW */}
           {selectedNode && !addingChildType && (
             <div>
-              <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-[#383838] mb-4">
+              <div className="flex items-center justify-between pb-4 border-b border-[#383838] mb-4">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-[#333] flex items-center justify-center font-bold text-slate-800 dark:text-white">
+                  <div className="w-10 h-10 rounded-xl bg-[#333] flex items-center justify-center font-bold text-white">
                     {selectedNode.type === 'SCHOOL' ? (
                       <Building2 className="w-5 h-5 text-[#eb4438]" />
                     ) : selectedNode.type === 'SCHOOL_ADMIN' ? (
@@ -1561,13 +1847,13 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                     ) : selectedNode.type === 'TEACHER' ? (
                       <BookOpen className="w-5 h-5 text-rose-500" />
                     ) : selectedNode.type === 'CLASS' ? (
-                      <Layers className="w-5 h-5 text-blue-600" />
+                      <Layers className="w-5 h-5 text-blue-500" />
                     ) : (
                       <UserCheck className="w-5 h-5 text-indigo-500" />
                     )}
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    <h3 className="text-sm font-bold text-white">
                       {selectedNode.fullName || selectedNode.name}
                     </h3>
                     <p className="text-[11px] text-slate-400">{selectedNode.roleTitle}</p>
@@ -1576,7 +1862,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                 <button
                   type="button"
                   onClick={() => setSelectedNode(null)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#333333]"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-[#333333]"
                 >
                   <X className="w-5 h-5" />
                 </button>
@@ -1585,33 +1871,31 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
               {/* Detail fields */}
               <div className="space-y-3 text-xs">
                 {selectedNode.email && (
-                  <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
+                  <div className="flex items-center gap-2 text-slate-300">
                     <Mail className="w-4 h-4 text-slate-400 shrink-0" />
                     <span className="truncate">{selectedNode.email}</span>
                   </div>
                 )}
                 {selectedNode.phone && (
-                  <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
+                  <div className="flex items-center gap-2 text-slate-300">
                     <Phone className="w-4 h-4 text-slate-400 shrink-0" />
                     <span>{selectedNode.phone}</span>
                   </div>
                 )}
                 {selectedNode.code && (
-                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-[#202020]">
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#202020]">
                     <span className="text-slate-400">Code / Identifier:</span>
-                    <span className="font-mono font-bold text-slate-800 dark:text-white">
-                      {selectedNode.code}
-                    </span>
+                    <span className="font-mono font-bold text-white">{selectedNode.code}</span>
                   </div>
                 )}
                 {selectedNode.sections && (
-                  <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-[#202020] space-y-1.5">
+                  <div className="p-2.5 rounded-xl bg-[#202020] space-y-1.5">
                     <span className="text-slate-400 font-semibold block text-[11px]">Enrolled Sections:</span>
                     <div className="flex flex-wrap gap-1">
                       {selectedNode.sections.map((sec: any) => (
                         <span
                           key={sec.id}
-                          className="px-2 py-0.5 rounded bg-white dark:bg-[#333] border border-slate-200 dark:border-[#404040] text-[10px] font-medium"
+                          className="px-2 py-0.5 rounded bg-[#333] border border-[#404040] text-[10px] font-medium text-slate-300"
                         >
                           {sec.name} ({sec._count?.students || 0} students)
                         </span>
@@ -1620,35 +1904,31 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                   </div>
                 )}
                 {selectedNode.studentCode && (
-                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-[#202020]">
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#202020]">
                     <span className="text-slate-400">Student Code:</span>
-                    <span className="font-mono font-bold text-slate-800 dark:text-white">
-                      {selectedNode.studentCode}
-                    </span>
+                    <span className="font-mono font-bold text-white">{selectedNode.studentCode}</span>
                   </div>
                 )}
                 {selectedNode.className && (
-                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-[#202020]">
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#202020]">
                     <span className="text-slate-400">Assigned Classroom:</span>
-                    <span className="font-semibold text-slate-800 dark:text-white">
+                    <span className="font-semibold text-white">
                       {selectedNode.className} ({selectedNode.sectionName})
                     </span>
                   </div>
                 )}
                 {selectedNode.designation && (
-                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-[#202020]">
+                  <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#202020]">
                     <span className="text-slate-400">Designation:</span>
-                    <span className="font-semibold text-slate-800 dark:text-white">
-                      {selectedNode.designation}
-                    </span>
+                    <span className="font-semibold text-white">{selectedNode.designation}</span>
                   </div>
                 )}
 
-                <div className="pt-3 border-t border-slate-100 dark:border-[#383838] space-y-2">
+                <div className="pt-3 border-t border-[#383838] space-y-2">
                   <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     Live System Sync
                   </div>
-                  <div className="flex items-center gap-2 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                  <div className="flex items-center gap-2 text-[11px] text-emerald-400 font-medium">
                     <CheckCircle2 className="w-4 h-4" />
                     <span>Database Synchronized across all Portals</span>
                   </div>
@@ -1671,7 +1951,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         size="sm"
                         variant="outline"
                         onClick={(e) => handleDeleteClass(selectedNode.id, selectedNode.name, e)}
-                        className="w-full text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 border-red-200 dark:border-red-900/60"
+                        className="w-full text-red-500 hover:bg-red-950/40 border-red-900/60"
                       >
                         <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Delete Class
                       </Button>
@@ -1681,7 +1961,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                       size="sm"
                       variant="outline"
                       onClick={() => handleDeleteMember(selectedNode.id, selectedNode.type)}
-                      className="w-full text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 border-red-200 dark:border-red-900/60"
+                      className="w-full text-red-500 hover:bg-red-950/40 border-red-900/60"
                     >
                       <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Remove Profile
                     </Button>
@@ -1691,7 +1971,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
             </div>
           )}
 
-          <div className="pt-4 border-t border-slate-100 dark:border-[#383838] text-center">
+          <div className="pt-4 border-t border-[#383838] text-center">
             <span className="text-[10px] text-slate-400">
               Smart Edu Multi-Tenant Organizational Graph
             </span>

@@ -72,4 +72,15 @@ export const hierarchyService = {
     const res = await apiClient.delete(`/hierarchy/allocate/${allocationId}`, { params });
     return res.data.data;
   },
+
+  async addSubjectToClass(classId: string, subjectId: string, schoolId?: string) {
+    const res = await apiClient.post(`/hierarchy/classes/${classId}/subjects`, { subjectId, schoolId });
+    return res.data.data;
+  },
+
+  async removeSubjectFromClass(classId: string, subjectId: string, schoolId?: string) {
+    const params = schoolId ? { schoolId } : {};
+    const res = await apiClient.delete(`/hierarchy/classes/${classId}/subjects/${subjectId}`, { params });
+    return res.data.data;
+  },
 };
