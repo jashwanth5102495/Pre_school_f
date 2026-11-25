@@ -122,6 +122,18 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
     currentY: number;
   } | null>(null);
 
+  // Mutable Ref to guarantee drop handlers always read current drag state without stale closures
+  const draggingWireRef = useRef<{
+    classId: string;
+    className: string;
+    subjectId: string;
+    subjectName: string;
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+  } | null>(null);
+
   // Active click-to-connect socket (accessible alternative to dragging)
   const [activeSocket, setActiveSocket] = useState<{
     classId: string;
@@ -336,14 +348,14 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   };
 
   // Wire Dragging Handlers
-  const handleStartDrag = (cls: any, sub: any, e: React.MouseEvent) => {
+  const handleStartDrag = (cls: any, sub: any, e: React.MouseEvent | React.PointerEvent) => {
     e.stopPropagation();
     if (!canAllocateTeachers || !canvasRef.current) return;
     const canvasRect = canvasRef.current.getBoundingClientRect();
     const startX = e.clientX - canvasRect.left;
     const startY = e.clientY - canvasRect.top;
 
-    setDraggingWire({
+    const dragData = {
       classId: cls.id,
       className: cls.name,
       subjectId: sub.id,
@@ -352,9 +364,64 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
       startY,
       currentX: startX,
       currentY: startY,
-    });
+    };
+
+    draggingWireRef.current = dragData;
+    setDraggingWire(dragData);
     setActiveSocket(null);
   };
+
+  // Global window listeners for drag & drop so releasing over ANY teacher node or socket connects reliably
+  useEffect(() => {
+    if (!draggingWire) return;
+
+    const onGlobalPointerMove = (e: MouseEvent | PointerEvent) => {
+      if (!canvasRef.current || !draggingWireRef.current) return;
+      const canvasRect = canvasRef.current.getBoundingClientRect();
+      const currentX = e.clientX - canvasRect.left;
+      const currentY = e.clientY - canvasRect.top;
+
+      draggingWireRef.current.currentX = currentX;
+      draggingWireRef.current.currentY = currentY;
+      setDraggingWire((prev) => (prev ? { ...prev, currentX, currentY } : null));
+    };
+
+    const onGlobalPointerUp = (e: MouseEvent | PointerEvent) => {
+      const active = draggingWireRef.current;
+      if (!active) return;
+
+      // Detect if cursor released over a teacher node box or socket
+      const elUnderCursor = document.elementFromPoint(e.clientX, e.clientY);
+      const teacherCard = elUnderCursor?.closest('[id^="node-teacher-"]');
+      const teacherSocket = elUnderCursor?.closest('[id^="socket-in-"]');
+
+      let targetTeacherId: string | null = null;
+      if (teacherCard) {
+        targetTeacherId = teacherCard.id.replace('node-teacher-', '');
+      } else if (teacherSocket) {
+        const parts = teacherSocket.id.split('-');
+        targetTeacherId = parts[2] || null;
+      }
+
+      if (targetTeacherId) {
+        handleQuickAllocate(active.classId, targetTeacherId, undefined, active.subjectId, false);
+      }
+
+      draggingWireRef.current = null;
+      setDraggingWire(null);
+      setActiveSocket(null);
+    };
+
+    window.addEventListener('pointermove', onGlobalPointerMove, { passive: true });
+    window.addEventListener('pointerup', onGlobalPointerUp);
+    window.addEventListener('mouseup', onGlobalPointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', onGlobalPointerMove);
+      window.removeEventListener('pointerup', onGlobalPointerUp);
+      window.removeEventListener('mouseup', onGlobalPointerUp);
+    };
+  }, [draggingWire]);
 
   const handleSocketClick = (cls: any, sub: any, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -373,10 +440,11 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 
   const handleTeacherDrop = (teacher: any, e?: React.MouseEvent) => {
     e?.stopPropagation();
-    const active = draggingWire || activeSocket;
+    const active = draggingWireRef.current || draggingWire || activeSocket;
     if (!active || !school?.id) return;
 
     handleQuickAllocate(active.classId, teacher.id, undefined, active.subjectId, false);
+    draggingWireRef.current = null;
     setDraggingWire(null);
     setActiveSocket(null);
   };
@@ -409,18 +477,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (draggingWire && canvasRef.current) {
-      const canvasRect = canvasRef.current.getBoundingClientRect();
-      setDraggingWire((prev) =>
-        prev
-          ? {
-              ...prev,
-              currentX: e.clientX - canvasRect.left,
-              currentY: e.clientY - canvasRect.top,
-            }
-          : null
-      );
-    } else if (isPanning) {
+    if (isPanning) {
       hasMovedRef.current = true;
       setPan({
         x: e.clientX - panStart.x,
@@ -436,9 +493,6 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
       } catch {}
-    }
-    if (draggingWire) {
-      setDraggingWire(null);
     }
   };
 
@@ -1307,24 +1361,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                             : 'border-[#383838] hover:border-slate-500'
                         }`}
                       >
-                        {/* CIRCULAR RECEIVING INPUT SOCKET ON LEFT EDGE */}
-                        <div
-                          id={`socket-in-${t.id}`}
-                          title="Drop wire here to allot subject to this teacher"
-                          onMouseUp={(e) => handleTeacherDrop(t, e)}
-                          className={`absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-[#252525] cursor-pointer transition-all hover:scale-135 shadow-sm z-30 flex items-center justify-center ${
-                            isTargetHovered
-                              ? 'bg-amber-400 ring-4 ring-amber-400/80 scale-125 animate-pulse'
-                              : t.allocations?.length > 0
-                              ? 'bg-emerald-400 ring-2 ring-emerald-400/40'
-                              : 'bg-slate-400 hover:bg-amber-400 ring-1 ring-slate-400/40'
-                          }`}
-                        >
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#1a1a1a]" />
-                        </div>
-
                         {/* Teacher Header */}
-                        <div className="flex items-center justify-between mb-2.5 pb-2 border-b border-[#333]">
+                        <div className="flex items-center justify-between mb-3 pb-2.5 border-b border-[#333]">
                           <div className="flex items-center gap-2.5 min-w-0">
                             <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-rose-500 to-pink-600 text-white flex items-center justify-center font-bold text-xs shrink-0 shadow-xs">
                               {t.fullName?.[0] || 'T'}
@@ -1342,41 +1380,84 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           </span>
                         </div>
 
-                        {/* Connected Subject Wires / Badges */}
-                        <div className="space-y-1.5">
-                          <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
-                            Allotted Subjects ({t.allocations?.length || 0})
+                        {/* MULTIPLE SUBJECT INPUT ENDPOINTS (EACH ALLOTTED SUBJECT GETS A DEDICATED SOCKET DOT) */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                            <span>Subject Endpoints ({t.allocations?.length || 0})</span>
+                            <span className="text-[9px] text-emerald-400 font-medium">Distinct Sockets</span>
                           </div>
 
-                          {t.allocations?.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {t.allocations.map((alloc: any) => (
-                                <span
-                                  key={alloc.id}
-                                  className="text-[10px] pl-2 pr-1.5 py-0.5 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300 font-semibold flex items-center gap-1.5"
+                          {/* 1. Dedicated sockets for each allotted subject */}
+                          {t.allocations?.map((alloc: any) => {
+                            const subjectId = alloc.subjectId || alloc.subject?.id;
+                            return (
+                              <div
+                                key={alloc.id}
+                                className="relative flex items-center justify-between px-3 py-1.5 rounded-xl bg-[#1b1b1b] border border-emerald-900/60 hover:border-emerald-700/80 transition-all shadow-xs group/alloc"
+                              >
+                                {/* DEDICATED INPUT SOCKET ON LEFT EDGE FOR THIS SUBJECT */}
+                                <div
+                                  id={`socket-in-${t.id}-${subjectId}`}
+                                  title={`Endpoint for ${alloc.subject?.name || 'Subject'}`}
+                                  className="absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-[#1b1b1b] bg-emerald-400 ring-2 ring-emerald-400/50 shadow-xs z-30 flex items-center justify-center cursor-pointer hover:scale-125 transition-transform"
                                 >
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                                  <span>
-                                    {alloc.class?.name || 'Class'} • {alloc.subject?.name || 'Subject'}
-                                  </span>
-                                  {canAllocateTeachers && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => handleRemoveAllocation(alloc.id, e)}
-                                      title="Unlink subject wire"
-                                      className="hover:text-red-400 p-0.5 interactive-action"
-                                    >
-                                      <X className="w-2.5 h-2.5" />
-                                    </button>
-                                  )}
-                                </span>
-                              ))}
+                                  <span className="w-1.5 h-1.5 rounded-full bg-[#121212]" />
+                                </div>
+
+                                <div className="flex items-center gap-2 min-w-0 pl-1">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                                  <div className="min-w-0">
+                                    <span className="text-xs font-bold text-emerald-300 block truncate leading-tight">
+                                      {alloc.subject?.name || 'Subject'}
+                                    </span>
+                                    <span className="text-[10px] text-slate-400 block truncate leading-tight">
+                                      {alloc.class?.name || 'Class'}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {canAllocateTeachers && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => handleRemoveAllocation(alloc.id, e)}
+                                    title="Unlink subject wire"
+                                    className="hover:text-rose-400 text-slate-500 p-1 rounded-lg hover:bg-rose-950/40 transition-colors interactive-action shrink-0 ml-2"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+
+                          {/* 2. OPEN RECEIVER SOCKET (Ready to accept newly dropped subject wires) */}
+                          <div
+                            className={`relative flex items-center gap-2 px-3 py-1.5 rounded-xl border border-dashed transition-all ${
+                              isTargetHovered
+                                ? 'border-amber-400 bg-amber-950/30 text-amber-300 shadow-md ring-2 ring-amber-400/40'
+                                : 'border-[#383838] bg-[#1a1a1a]/60 text-slate-400 hover:border-amber-500/50 hover:bg-[#202020]'
+                            }`}
+                          >
+                            {/* RECEIVING INPUT SOCKET FOR NEW WIRES */}
+                            <div
+                              id={`socket-in-${t.id}`}
+                              title="Drop wire here to map new subject"
+                              className={`absolute -left-2 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full border-2 border-[#1a1a1a] shadow-xs z-30 flex items-center justify-center cursor-pointer transition-all ${
+                                isTargetHovered
+                                  ? 'bg-amber-400 ring-4 ring-amber-400/80 scale-125 animate-pulse'
+                                  : 'bg-yellow-400 ring-2 ring-yellow-400/40 hover:scale-125'
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#121212]" />
                             </div>
-                          ) : (
-                            <div className="text-[10px] text-slate-500 italic py-1">
-                              Drop any class subject wire here to allot
+
+                            <div className="pl-1 flex items-center gap-2 text-xs">
+                              <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+                              <span className="font-medium text-[11px]">
+                                {isTargetHovered ? 'Drop wire here to connect!' : '+ Connect Subject Endpoint'}
+                              </span>
                             </div>
-                          )}
+                          </div>
                         </div>
                       </div>
                     );

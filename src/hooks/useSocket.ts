@@ -2,11 +2,25 @@ import { useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuthStore } from '../store/auth.store';
 
-const SOCKET_URL =
-  import.meta.env.VITE_SOCKET_URL ||
-  import.meta.env.VITE_API_BASE_URL?.replace('/api/v1', '') ||
-  import.meta.env.VITE_API_URL?.replace('/api/v1', '') ||
-  'http://localhost:5000';
+const getSocketUrl = () => {
+  const envUrl = import.meta.env.VITE_SOCKET_URL;
+  const isBrowser = typeof window !== 'undefined';
+  const isRemoteHost =
+    isBrowser && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+
+  if (isRemoteHost && (!envUrl || envUrl.includes('localhost') || envUrl.includes('127.0.0.1'))) {
+    return 'https://anvimerbackend-production.up.railway.app';
+  }
+
+  return (
+    envUrl ||
+    import.meta.env.VITE_API_BASE_URL?.replace('/api/v1', '') ||
+    import.meta.env.VITE_API_URL?.replace('/api/v1', '') ||
+    'http://localhost:5000'
+  );
+};
+
+const SOCKET_URL = getSocketUrl();
 
 export function useSocket(onEvent?: (event: string, payload: any) => void) {
   const token = useAuthStore((state) => state.token);
