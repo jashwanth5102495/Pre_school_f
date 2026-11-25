@@ -106,6 +106,79 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   const [hoveredWireId, setHoveredWireId] = useState<string | null>(null);
   const [wireConnections, setWireConnections] = useState<WireConnection[]>([]);
 
+  // ── Node free-drag positions (n8n-style) ──────────────────────────────────
+  const [nodePositions, setNodePositions] = useState<Record<string, { x: number; y: number }>>({});
+  const draggingNodeRef = useRef<{
+    key: string;
+    startMouseX: number;
+    startMouseY: number;
+    startNodeX: number;
+    startNodeY: number;
+  } | null>(null);
+  // Stable ref to updateWirePositions (set after it's defined below)
+  const updateWirePositionsRef = useRef<() => void>(() => {});
+
+  const startNodeDrag = useCallback(
+    (key: string, e: React.PointerEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      setIsPanning(false);
+      const cur = nodePositions[key] || { x: 0, y: 0 };
+      draggingNodeRef.current = {
+        key,
+        startMouseX: e.clientX,
+        startMouseY: e.clientY,
+        startNodeX: cur.x,
+        startNodeY: cur.y,
+      };
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
+    },
+    [nodePositions]
+  );
+
+  const onNodePointerMove = useCallback((e: React.PointerEvent) => {
+    if (!draggingNodeRef.current) return;
+    const { key, startMouseX, startMouseY, startNodeX, startNodeY } = draggingNodeRef.current;
+    const dx = (e.clientX - startMouseX) / zoom;
+    const dy = (e.clientY - startMouseY) / zoom;
+    setNodePositions((prev) => ({ ...prev, [key]: { x: startNodeX + dx, y: startNodeY + dy } }));
+    requestAnimationFrame(() => updateWirePositionsRef.current());
+  }, [zoom]);
+
+  const onNodePointerUp = useCallback((e: React.PointerEvent) => {
+    if (!draggingNodeRef.current) return;
+    draggingNodeRef.current = null;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+    requestAnimationFrame(() => updateWirePositionsRef.current());
+  }, []);
+
+  /** Returns inline style with translate for a draggable node */
+  const nodeDragStyle = (key: string): React.CSSProperties => {
+    const pos = nodePositions[key];
+    if (!pos) return { cursor: 'grab' };
+    return { transform: `translate(${pos.x}px, ${pos.y}px)`, position: 'relative', zIndex: 25, cursor: draggingNodeRef.current?.key === key ? 'grabbing' : 'grab' };
+  };
+
+  /** Props to attach to any draggable node wrapper div — spread onto the outermost div of each node */
+  const nodeDragProps = (key: string) => ({
+    style: nodeDragStyle(key),
+    onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.closest('button') ||
+        target.closest('input') ||
+        target.closest('select') ||
+        target.closest('a') ||
+        target.closest('[id^="socket-"]') ||
+        target.closest('.interactive-action')
+      ) return;
+      startNodeDrag(key, e);
+    },
+    onPointerMove: onNodePointerMove,
+    onPointerUp: onNodePointerUp,
+  });
+  // ─────────────────────────────────────────────────────────────────────────
+
   // Form state
   const [formData, setFormData] = useState({
     fullName: '',
@@ -213,6 +286,9 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 
     setWireConnections(newWires);
   }, [classes, teachers, zoom, pan]);
+
+  // Keep ref in sync so node drag handlers can call it without stale closures
+  useEffect(() => { updateWirePositionsRef.current = updateWirePositions; }, [updateWirePositions]);
 
   useEffect(() => {
     updateWirePositions();
@@ -779,7 +855,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                     address: `${school?.profile?.city || ''}, ${school?.profile?.state || ''}`,
                   });
                 }}
-                className={`w-80 p-4 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 group ${
+                {...nodeDragProps('school')}
+                className={`w-80 p-4 rounded-2xl border transition-all duration-200 bg-[#242424] shadow-sm hover:shadow-md flex items-center justify-between gap-3 group ${
                   selectedNode?.type === 'SCHOOL'
                     ? 'border-[#eb4438] ring-2 ring-[#eb4438]/20 shadow-md'
                     : 'border-[#383838] hover:border-[#484848]'
@@ -840,7 +917,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                         roleTitle: 'Institution Executive Head',
                       });
                     }}
-                    className={`w-80 p-4 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
+                    {...nodeDragProps(`principal-${p.id}`)}
+                    className={`w-80 p-4 rounded-2xl border transition-all duration-200 bg-[#242424] shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
                       selectedNode?.id === p.id
                         ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-md'
                         : 'border-[#383838]'
@@ -910,7 +988,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           roleTitle: 'Academic Director & Curriculum Head',
                         });
                       }}
-                      className={`w-full max-w-sm p-3.5 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
+                      {...nodeDragProps(`academic-${a.id}`)}
+                      className={`w-full max-w-sm p-3.5 rounded-2xl border transition-all duration-200 bg-[#242424] shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
                         selectedNode?.id === a.id
                           ? 'border-emerald-500 ring-2 ring-emerald-500/20 shadow-md'
                           : 'border-[#383838]'
@@ -985,6 +1064,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                       <div
                         key={cls.id}
                         id={`node-class-${cls.id}`}
+                        {...nodeDragProps(`class-${cls.id}`)}
                         className={`rounded-2xl border transition-all duration-200 bg-[#252525] p-4 shadow-md relative ${
                           isSelected
                             ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-lg'
@@ -1177,6 +1257,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                       <div
                         key={t.id}
                         id={`node-teacher-${t.id}`}
+                        {...nodeDragProps(`teacher-${t.id}`)}
                         onMouseUp={(e) => handleTeacherDrop(t, e)}
                         onClick={(e) => {
                           if (hasMovedRef.current) return;
@@ -1307,7 +1388,8 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
                           roleTitle: 'Finance, Fee Collections & Admissions',
                         });
                       }}
-                      className={`w-full p-3.5 rounded-2xl border transition-all duration-200 bg-[#242424] cursor-pointer shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
+                      {...nodeDragProps(`finance-${f.id}`)}
+                      className={`w-full p-3.5 rounded-2xl border transition-all duration-200 bg-[#242424] shadow-sm hover:shadow-md flex items-center justify-between gap-3 ${
                         selectedNode?.id === f.id
                           ? 'border-amber-500 ring-2 ring-amber-500/20 shadow-md'
                           : 'border-[#383838]'
