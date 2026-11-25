@@ -24,7 +24,19 @@ export const SchoolAdminLayout: React.FC = () => {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    return localStorage.getItem('sidebar_expanded') === 'true';
+  });
+
+  const toggleSidebar = () => {
+    setIsSidebarOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem('sidebar_expanded', String(next));
+      return next;
+    });
+  };
+
+  const isTreePage = location.pathname.includes('/tree');
 
   const handleLogout = () => {
     logout();
@@ -57,13 +69,17 @@ export const SchoolAdminLayout: React.FC = () => {
         )}
       >
         {/* Hamburger + Brand */}
-        <div className="h-16 flex items-center border-b border-[#2e2e2e] px-3 gap-3 shrink-0">
+        <div className={cn(
+          'h-16 flex items-center border-b border-[#2e2e2e] shrink-0',
+          isSidebarOpen ? 'px-3 gap-3 justify-start' : 'justify-center'
+        )}>
           <button
-            onClick={() => setIsSidebarOpen((v) => !v)}
-            className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-[#333333] transition-colors shrink-0 cursor-pointer"
+            onClick={toggleSidebar}
+            className="w-11 h-11 flex items-center justify-center rounded-2xl text-slate-300 hover:text-white hover:bg-[#282828] transition-colors shrink-0 cursor-pointer active:scale-95"
             aria-label="Toggle Navigation"
+            title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
           >
-            {isSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            <Menu className="w-5 h-5" />
           </button>
           {isSidebarOpen && (
             <div className="flex items-center gap-2 min-w-0 overflow-hidden">
@@ -82,7 +98,7 @@ export const SchoolAdminLayout: React.FC = () => {
 
         {/* Nav Items */}
         <nav className="flex-1 py-3 overflow-y-auto overflow-x-hidden">
-          <div className={cn('flex flex-col', isSidebarOpen ? 'px-2 space-y-0.5' : 'px-2 space-y-1 items-center')}>
+          <div className={cn('flex flex-col', isSidebarOpen ? 'px-2 space-y-1' : 'px-2 space-y-2 items-center')}>
             {navItems.map((item) => {
               const Icon = item.icon;
               const isActive = location.pathname.startsWith(item.path);
@@ -92,22 +108,21 @@ export const SchoolAdminLayout: React.FC = () => {
                   to={item.path}
                   title={!isSidebarOpen ? item.label : undefined}
                   className={cn(
-                    'flex items-center rounded-xl transition-colors group relative',
+                    'flex items-center transition-all group relative',
                     isSidebarOpen
-                      ? 'gap-3 px-3 py-2.5 text-xs font-medium w-full'
-                      : 'w-10 h-10 justify-center',
+                      ? 'gap-3 px-3 py-2.5 rounded-xl text-xs font-medium w-full'
+                      : 'w-11 h-11 rounded-2xl justify-center',
                     isActive
-                      ? 'bg-[#eb4438] text-white font-bold shadow-sm'
-                      : 'text-slate-400 hover:bg-[#2a2a2a] hover:text-white'
+                      ? isSidebarOpen
+                        ? 'bg-[#eb4438] text-white font-bold shadow-md shadow-[#eb4438]/20'
+                        : 'bg-[#eb4438] text-white font-bold shadow-lg shadow-[#eb4438]/30'
+                      : 'text-slate-400 hover:bg-[#252525] hover:text-white'
                   )}
                 >
-                  {!isSidebarOpen && isActive && (
-                    <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-[#eb4438] rounded-r-full" />
-                  )}
-                  <Icon className="w-5 h-5 shrink-0" />
+                  <Icon className={cn('shrink-0 transition-transform', isSidebarOpen ? 'w-4 h-4' : 'w-5 h-5')} />
                   {isSidebarOpen && <span className="truncate">{item.label}</span>}
                   {!isSidebarOpen && (
-                    <span className="absolute left-full ml-3 px-2 py-1 rounded-lg bg-[#2a2a2a] text-white text-xs whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 border border-[#3a3a3a] shadow-lg">
+                    <span className="absolute left-full ml-3 px-2.5 py-1 rounded-lg bg-[#222222] text-white text-xs font-medium whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 border border-[#383838] shadow-2xl">
                       {item.label}
                     </span>
                   )}
@@ -183,7 +198,14 @@ export const SchoolAdminLayout: React.FC = () => {
         </header>
 
         {/* Scrollable Page Body - Full Width */}
-        <main className="flex-1 p-4 sm:p-6 overflow-y-auto bg-[#f8fafc] dark:bg-[#212121]">
+        <main
+          className={cn(
+            'flex-1 overflow-x-hidden transition-all',
+            isTreePage
+              ? 'p-0 overflow-hidden bg-[#141414]'
+              : 'p-4 sm:p-6 overflow-y-auto bg-[#f8fafc] dark:bg-[#212121]'
+          )}
+        >
           <Outlet />
         </main>
       </div>

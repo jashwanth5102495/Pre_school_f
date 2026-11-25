@@ -1,13 +1,27 @@
-import React, { useState } from 'react';
-import { Outlet } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { useSocket } from '../../hooks/useSocket';
 import { CheckCircle2 } from 'lucide-react';
+import { cn } from '../../utils/cn';
 
 export const SuperAdminLayout: React.FC = () => {
+  const location = useLocation();
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    return localStorage.getItem('sidebar_expanded') === 'true';
+  });
+
+  const toggleSidebar = () => {
+    setIsSidebarOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem('sidebar_expanded', String(next));
+      return next;
+    });
+  };
+
+  const isTreePage = location.pathname.includes('/tree');
 
   // Hook into live Socket.IO events
   useSocket((event, payload) => {
@@ -29,12 +43,19 @@ export const SuperAdminLayout: React.FC = () => {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#1e1e1e] dark:bg-[#1e1e1e] transition-colors duration-200">
       {/* Sidebar: collapsed (icon-only) or expanded */}
-      <Sidebar isOpen={isSidebarOpen} onToggle={() => setIsSidebarOpen((v) => !v)} />
+      <Sidebar isOpen={isSidebarOpen} onToggle={toggleSidebar} />
 
       {/* Main area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Header />
-        <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 bg-[#f8fafc] dark:bg-[#212121]">
+        <main
+          className={cn(
+            'flex-1 overflow-x-hidden transition-all',
+            isTreePage
+              ? 'p-0 overflow-hidden bg-[#141414]'
+              : 'overflow-y-auto p-4 sm:p-6 bg-[#f8fafc] dark:bg-[#212121]'
+          )}
+        >
           <Outlet />
         </main>
       </div>

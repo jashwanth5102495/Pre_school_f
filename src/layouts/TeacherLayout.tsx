@@ -13,15 +13,27 @@ import {
   LogOut,
   UserCheck,
   Menu,
-  X,
   Network,
 } from 'lucide-react';
+import { cn } from '../utils/cn';
 
 export const TeacherLayout: React.FC = () => {
   const { user, logout } = useAuthStore();
   const navigate = useNavigate();
   const location = useLocation();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    return localStorage.getItem('sidebar_expanded') === 'true';
+  });
+
+  const toggleSidebar = () => {
+    setIsSidebarOpen((prev) => {
+      const next = !prev;
+      localStorage.setItem('sidebar_expanded', String(next));
+      return next;
+    });
+  };
+
+  const isTreePage = location.pathname.includes('/tree');
 
   const handleLogout = () => {
     logout();
@@ -41,164 +53,141 @@ export const TeacherLayout: React.FC = () => {
   const currentItem = navItems.find((item) => location.pathname.startsWith(item.path)) || navItems[0];
 
   return (
-    <div className="flex min-h-screen bg-[#f8fafc] dark:bg-[#212121] transition-colors duration-200">
-      {/* ===================== DESKTOP SIDEBAR ===================== */}
-      <aside className="hidden lg:flex w-64 bg-slate-900 text-white flex-col shrink-0 border-r border-slate-800 h-screen sticky top-0">
-        <div className="p-5 border-b border-slate-800 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#eb4438] flex items-center justify-center text-white font-bold shadow-md shrink-0">
-            <BookOpen className="w-5 h-5" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-sm font-bold truncate text-white leading-tight">
-              {user?.schoolName || 'Oakridge International'}
+    <div className="flex h-screen w-screen overflow-hidden bg-[#1e1e1e] transition-colors duration-200">
+      {/* ===================== COLLAPSIBLE SIDEBAR ===================== */}
+      <aside
+        className={cn(
+          'flex flex-col h-screen sticky top-0 z-30 shrink-0',
+          'bg-[#1a1a1a] border-r border-[#2e2e2e]',
+          'transition-all duration-300 ease-in-out',
+          isSidebarOpen ? 'w-64' : 'w-16'
+        )}
+      >
+        {/* Hamburger + Brand */}
+        <div
+          className={cn(
+            'h-16 flex items-center border-b border-[#2e2e2e] shrink-0',
+            isSidebarOpen ? 'px-3 gap-3 justify-start' : 'justify-center'
+          )}
+        >
+          <button
+            onClick={toggleSidebar}
+            className="w-11 h-11 flex items-center justify-center rounded-2xl text-slate-300 hover:text-white hover:bg-[#282828] transition-colors shrink-0 cursor-pointer active:scale-95"
+            aria-label="Toggle Navigation"
+            title={isSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          {isSidebarOpen && (
+            <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+              <div className="w-8 h-8 rounded-xl bg-[#eb4438] flex items-center justify-center text-white font-bold shadow-md shrink-0">
+                <BookOpen className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-bold truncate text-white leading-tight">
+                  {user?.schoolName || 'Oakridge International'}
+                </div>
+                <div className="text-[11px] text-[#eb4438] font-medium">Faculty Teacher Portal</div>
+              </div>
             </div>
-            <div className="text-[11px] text-[#eb4438] font-medium">Faculty Teacher Portal</div>
-          </div>
+          )}
         </div>
 
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            return (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-all ${
+        {/* Nav Items */}
+        <nav className="flex-1 py-3 overflow-y-auto overflow-x-hidden">
+          <div className={cn('flex flex-col', isSidebarOpen ? 'px-2 space-y-1' : 'px-2 space-y-2 items-center')}>
+            {navItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname.startsWith(item.path);
+              return (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  title={!isSidebarOpen ? item.label : undefined}
+                  className={cn(
+                    'flex items-center transition-all group relative',
+                    isSidebarOpen
+                      ? 'gap-3 px-3 py-2.5 rounded-xl text-xs font-medium w-full'
+                      : 'w-11 h-11 rounded-2xl justify-center',
                     isActive
-                      ? 'bg-[#eb4438] text-white shadow-sm font-semibold'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800/70'
-                  }`
-                }
-              >
-                <Icon className="w-4 h-4 shrink-0" />
-                <span>{item.label}</span>
-              </NavLink>
-            );
-          })}
+                      ? isSidebarOpen
+                        ? 'bg-[#eb4438] text-white font-bold shadow-md shadow-[#eb4438]/20'
+                        : 'bg-[#eb4438] text-white font-bold shadow-lg shadow-[#eb4438]/30'
+                      : 'text-slate-400 hover:bg-[#252525] hover:text-white'
+                  )}
+                >
+                  <Icon className={cn('shrink-0 transition-transform', isSidebarOpen ? 'w-4 h-4' : 'w-5 h-5')} />
+                  {isSidebarOpen && <span className="truncate">{item.label}</span>}
+                  {!isSidebarOpen && (
+                    <span className="absolute left-full ml-3 px-2.5 py-1 rounded-lg bg-[#222222] text-white text-xs font-medium whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 border border-[#383838] shadow-2xl">
+                      {item.label}
+                    </span>
+                  )}
+                </NavLink>
+              );
+            })}
+          </div>
         </nav>
 
-        {/* Sidebar Footer with Explicit Logout Button */}
-        <div className="p-4 border-t border-slate-800 bg-slate-950/40">
-          <div className="flex items-center justify-between mb-3">
-            <div className="min-w-0 pr-2">
-              <div className="text-xs font-semibold text-white truncate">{user?.fullName || 'Faculty Member'}</div>
-              <div className="text-[10px] text-slate-400 truncate">{user?.email}</div>
-            </div>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="w-full py-2 px-3 rounded-xl bg-[#eb4438]/10 hover:bg-[#eb4438]/20 text-[#eb4438] border border-[#eb4438]/30 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Sign Out</span>
-          </button>
-        </div>
-      </aside>
-
-      {/* ===================== MOBILE DRAWER MENU ===================== */}
-      {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 bg-black/60 backdrop-blur-xs transition-opacity"
-            onClick={() => setIsMobileMenuOpen(false)}
-          />
-
-          {/* Drawer Sidebar */}
-          <div className="fixed inset-y-0 left-0 w-72 max-w-[85vw] bg-slate-900 text-white flex flex-col shadow-2xl z-50 animate-in slide-in-from-left duration-200">
-            <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="w-9 h-9 rounded-xl bg-[#eb4438] flex items-center justify-center text-white font-bold shrink-0">
-                  <BookOpen className="w-4 h-4" />
+        {/* Footer */}
+        <div
+          className={cn(
+            'border-t border-[#2e2e2e] bg-[#161616]',
+            isSidebarOpen ? 'p-4' : 'p-2 flex flex-col items-center gap-2'
+          )}
+        >
+          {isSidebarOpen ? (
+            <>
+              <div className="flex items-center gap-2 mb-3 min-w-0">
+                <div className="w-8 h-8 rounded-full bg-[#eb4438]/20 text-[#eb4438] border border-[#eb4438]/30 flex items-center justify-center font-bold text-xs uppercase shrink-0">
+                  {user?.fullName?.charAt(0) || 'T'}
                 </div>
                 <div className="min-w-0">
-                  <div className="text-xs font-bold truncate text-white leading-tight">
-                    {user?.schoolName || 'Oakridge International'}
-                  </div>
-                  <div className="text-[10px] text-[#eb4438] font-medium">Faculty Teacher Portal</div>
+                  <div className="text-xs font-bold text-white truncate">{user?.fullName || 'Faculty Educator'}</div>
+                  <div className="text-[10px] text-slate-500 truncate">{user?.email}</div>
                 </div>
-              </div>
-              <button
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-                aria-label="Close Menu"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <NavLink
-                    key={item.path}
-                    to={item.path}
-                    onClick={() => setIsMobileMenuOpen(false)}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-3.5 py-3 rounded-xl text-xs font-medium transition-all ${
-                        isActive
-                          ? 'bg-[#eb4438] text-white shadow-sm font-semibold'
-                          : 'text-slate-400 hover:text-white hover:bg-slate-800/70'
-                      }`
-                    }
-                  >
-                    <Icon className="w-4 h-4 shrink-0" />
-                    <span>{item.label}</span>
-                  </NavLink>
-                );
-              })}
-            </nav>
-
-            <div className="p-4 border-t border-slate-800 bg-slate-950/60">
-              <div className="mb-3">
-                <div className="text-xs font-semibold text-white truncate">{user?.fullName || 'Faculty Member'}</div>
-                <div className="text-[10px] text-slate-400 truncate">{user?.email}</div>
               </div>
               <button
                 onClick={handleLogout}
-                className="w-full py-2.5 px-3 rounded-xl bg-[#eb4438] hover:bg-[#d9382d] text-white text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-sm"
+                className="w-full py-2 px-3 rounded-xl bg-[#eb4438]/10 hover:bg-[#eb4438]/20 text-[#eb4438] border border-[#eb4438]/30 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
               >
-                <LogOut className="w-4 h-4" />
+                <LogOut className="w-3.5 h-3.5" />
                 <span>Sign Out</span>
               </button>
-            </div>
-          </div>
+            </>
+          ) : (
+            <button
+              onClick={handleLogout}
+              title="Sign Out"
+              className="w-10 h-10 flex items-center justify-center rounded-xl text-[#eb4438] hover:bg-[#eb4438]/20 transition-colors cursor-pointer"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          )}
         </div>
-      )}
+      </aside>
 
       {/* ===================== MAIN CONTENT WRAPPER ===================== */}
-      <div className="flex-1 flex flex-col min-w-0 w-full overflow-hidden">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Top Header */}
-        <header className="h-16 bg-white dark:bg-[#282828] border-b border-slate-200/80 dark:border-[#383838] px-4 sm:px-8 flex items-center justify-between sticky top-0 z-30 transition-colors duration-200">
+        <header className="h-16 bg-[#1a1a1a] border-b border-[#2e2e2e] px-4 sm:px-8 flex items-center justify-between sticky top-0 z-30 transition-colors duration-200">
           <div className="flex items-center gap-3 min-w-0">
-            {/* Hamburger Button (Mobile Only) */}
-            <button
-              onClick={() => setIsMobileMenuOpen(true)}
-              className="lg:hidden p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#333333] transition-colors shrink-0"
-              aria-label="Open Navigation Menu"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-
             <UserCheck className="w-5 h-5 text-[#eb4438] shrink-0 hidden sm:block" />
-            <h1 className="text-xs sm:text-sm font-semibold text-slate-800 dark:text-white truncate">
-              <span className="text-slate-400 dark:text-slate-400 font-normal hidden md:inline">Teacher Workspace &middot; </span>
+            <h1 className="text-xs sm:text-sm font-semibold text-white truncate">
+              <span className="text-slate-400 font-normal hidden md:inline">
+                Faculty Portal &middot;{' '}
+              </span>
               {currentItem.label}
             </h1>
           </div>
 
-          {/* Right Header: Theme Toggle + User info & Direct Logout */}
+          {/* Right Header */}
           <div className="flex items-center gap-3 shrink-0">
-            {/* Theme Toggle Button */}
             <ThemeToggle />
-
             <div className="text-right hidden sm:block">
-              <div className="text-xs font-semibold text-slate-800 dark:text-slate-100 leading-tight">{user?.fullName}</div>
-              <div className="text-[10px] text-slate-400 leading-tight">{user?.schoolName}</div>
+              <div className="text-xs font-semibold text-white leading-tight">{user?.fullName}</div>
+              <div className="text-[10px] text-slate-400 leading-tight">Teaching Faculty Educator</div>
             </div>
-
             <button
               onClick={handleLogout}
               className="flex items-center gap-1.5 py-1.5 px-3 rounded-lg text-xs font-semibold text-[#eb4438] hover:text-white hover:bg-[#eb4438] border border-[#eb4438]/40 transition-colors cursor-pointer"
@@ -210,8 +199,15 @@ export const TeacherLayout: React.FC = () => {
           </div>
         </header>
 
-        {/* Scrollable Page Body */}
-        <main className="flex-1 p-4 sm:p-6 overflow-y-auto">
+        {/* Scrollable Page Body - Full Width */}
+        <main
+          className={cn(
+            'flex-1 overflow-x-hidden transition-all',
+            isTreePage
+              ? 'p-0 overflow-hidden bg-[#141414]'
+              : 'p-4 sm:p-6 overflow-y-auto bg-[#f8fafc] dark:bg-[#212121]'
+          )}
+        >
           <Outlet />
         </main>
       </div>
@@ -220,4 +216,3 @@ export const TeacherLayout: React.FC = () => {
 };
 
 export default TeacherLayout;
-

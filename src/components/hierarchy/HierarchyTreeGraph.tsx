@@ -64,6 +64,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 }) => {
   const { user } = useAuthStore();
   const canvasRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Panels & Selection
   const [selectedNode, setSelectedNode] = useState<any | null>(null);
@@ -81,6 +82,33 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
   const [isMotionPaused, setIsMotionPaused] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const hasMovedRef = useRef(false);
+
+  // Native Fullscreen handler
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      const el = containerRef.current || canvasRef.current;
+      if (el?.requestFullscreen) {
+        el.requestFullscreen().catch(() => setIsFullscreen(true));
+      } else {
+        setIsFullscreen(true);
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => setIsFullscreen(false));
+      } else {
+        setIsFullscreen(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+      setTimeout(() => updateWirePositionsRef.current(), 150);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
 
   // Interactive Dragging Wire State (Blender / n8n Nodes style)
   const [draggingWire, setDraggingWire] = useState<{
@@ -605,10 +633,11 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 
   return (
     <div
-      className={`relative w-full select-none transition-all duration-200 ${
+      ref={containerRef}
+      className={`relative w-full h-full select-none transition-all duration-200 overflow-hidden ${
         isFullscreen
           ? 'fixed inset-0 z-50 bg-[#141414] w-screen h-screen m-0 p-0'
-          : 'h-[calc(100vh-215px)] min-h-[800px]'
+          : ''
       }`}
     >
       {/* ========================================================================= */}
@@ -621,34 +650,32 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onWheel={handleWheel}
-        className={`w-full h-full ${
-          isFullscreen ? 'rounded-none border-0' : 'rounded-2xl border border-neutral-800'
-        } bg-[#141414] overflow-hidden relative flex flex-col items-center shadow-2xl ${
+        className={`w-full h-full rounded-none border-0 bg-[#141414] overflow-hidden relative flex flex-col items-center ${
           isPanning ? 'cursor-grabbing' : 'cursor-grab'
         }`}
       >
         {/* Subtle Canvas Dot Grid Pattern matching n8n / user attachment */}
         <div
-          className="absolute inset-0 pointer-events-none opacity-25 rounded-2xl"
+          className="absolute inset-0 pointer-events-none opacity-25"
           style={{
             backgroundImage: 'radial-gradient(circle, #94a3b8 1.2px, transparent 1.2px)',
             backgroundSize: '24px 24px',
           }}
         />
 
-        {/* Top Canvas Toolbar */}
-        <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3 mb-4 relative z-30 pointer-events-auto">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="px-3 py-1 rounded-full text-[11px] font-bold tracking-wide uppercase bg-white dark:bg-[#282828] border border-slate-200 dark:border-[#383838] text-slate-700 dark:text-slate-300 shadow-xs flex items-center gap-1.5">
+        {/* Top Canvas Floating Status Overlay */}
+        <div className="absolute top-4 left-6 right-6 flex flex-col sm:flex-row items-center justify-between gap-3 z-30 pointer-events-none">
+          <div className="flex flex-wrap items-center gap-2 pointer-events-auto">
+            <span className="px-3 py-1 rounded-full text-[11px] font-bold tracking-wide uppercase bg-[#1e1e1e] border border-[#383838] text-slate-300 shadow-md flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               Institutional Hierarchy Tree
             </span>
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-slate-400 font-medium bg-[#1a1a1a]/90 px-3 py-1 rounded-full border border-[#2e2e2e]">
               {classes.length} Classes • {teachers.length} Faculty • {students.length} Students in Live Sync
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pointer-events-auto">
             {/* Active wire drag/click helper banner */}
             {(draggingWire || activeSocket) && (
               <span className="px-2.5 py-1 rounded-xl text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5 animate-pulse">
@@ -1635,7 +1662,7 @@ export const HierarchyTreeGraph: React.FC<HierarchyTreeGraphProps> = ({
 
           <button
             type="button"
-            onClick={() => setIsFullscreen(!isFullscreen)}
+            onClick={toggleFullscreen}
             title={isFullscreen ? 'Exit Full Screen' : 'Toggle Full Screen Workspace'}
             className="flex items-center gap-1.5 px-3 py-1.5 font-semibold text-xs hover:text-white hover:bg-[#2c2c2c] rounded-xl transition-colors active:scale-95 text-slate-200"
           >

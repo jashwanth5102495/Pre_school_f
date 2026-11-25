@@ -67,12 +67,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
       )}
     >
       {/* Top: Hamburger + Brand */}
-      <div className="h-16 flex items-center border-b border-[#2e2e2e] px-3 gap-3 shrink-0">
+      <div className={cn(
+        'h-16 flex items-center border-b border-[#2e2e2e] shrink-0',
+        isOpen ? 'px-3 gap-3 justify-start' : 'justify-center'
+      )}>
         {/* Hamburger always visible */}
         <button
           onClick={onToggle}
-          className="w-10 h-10 flex items-center justify-center rounded-xl text-slate-400 hover:text-white hover:bg-[#333333] transition-colors shrink-0 cursor-pointer"
+          className="w-11 h-11 flex items-center justify-center rounded-2xl text-slate-300 hover:text-white hover:bg-[#282828] transition-colors shrink-0 cursor-pointer active:scale-95"
           aria-label="Toggle Navigation"
+          title={isOpen ? 'Collapse sidebar' : 'Expand sidebar'}
         >
           <Menu className="w-5 h-5" />
         </button>
@@ -80,7 +84,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
         {/* Brand — only shown when expanded */}
         {isOpen && (
           <div className="flex items-center gap-2 min-w-0 overflow-hidden">
-            <div className="w-8 h-8 rounded-lg bg-[#eb4438] flex items-center justify-center text-white shadow-sm shrink-0">
+            <div className="w-8 h-8 rounded-xl bg-[#eb4438] flex items-center justify-center text-white shadow-sm shrink-0">
               <Sparkles className="w-4 h-4" />
             </div>
             <div className="flex flex-col min-w-0">
@@ -102,7 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
             Management
           </div>
         )}
-        <div className={cn('flex flex-col', isOpen ? 'px-2 space-y-0.5' : 'px-2 space-y-1 items-center')}>
+        <div className={cn('flex flex-col', isOpen ? 'px-2 space-y-1' : 'px-2 space-y-2 items-center')}>
           {navItems.map((item) => {
             const Icon = item.icon;
             return (
@@ -112,28 +116,26 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onToggle }) => {
                 title={!isOpen ? item.name : undefined}
                 className={({ isActive }) =>
                   cn(
-                    'flex items-center rounded-xl transition-colors group relative',
+                    'flex items-center transition-all group relative',
                     isOpen
-                      ? 'gap-3 px-3 py-2.5 text-xs font-medium w-full'
-                      : 'w-10 h-10 justify-center',
+                      ? 'gap-3 px-3 py-2.5 rounded-xl text-xs font-medium w-full'
+                      : 'w-11 h-11 rounded-2xl justify-center',
                     isActive
-                      ? 'bg-[#eb4438] text-white font-bold shadow-sm'
-                      : 'text-slate-400 hover:bg-[#2a2a2a] hover:text-white'
+                      ? isOpen
+                        ? 'bg-[#eb4438] text-white font-bold shadow-md shadow-[#eb4438]/20'
+                        : 'bg-[#eb4438] text-white font-bold shadow-lg shadow-[#eb4438]/30'
+                      : 'text-slate-400 hover:bg-[#252525] hover:text-white'
                   )
                 }
               >
                 {({ isActive }) => (
                   <>
-                    {/* Active indicator dot when collapsed */}
-                    {!isOpen && isActive && (
-                      <span className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-5 bg-[#eb4438] rounded-r-full" />
-                    )}
-                    <Icon className="w-5 h-5 shrink-0" />
+                    <Icon className={cn('shrink-0 transition-transform', isOpen ? 'w-4 h-4' : 'w-5 h-5')} />
                     {isOpen && <span className="truncate">{item.name}</span>}
 
-                    {/* Tooltip on collapsed */}
+                    {/* Tooltip on collapsed rail */}
                     {!isOpen && (
-                      <span className="absolute left-full ml-3 px-2 py-1 rounded-lg bg-[#2a2a2a] text-white text-xs whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 border border-[#3a3a3a] shadow-lg">
+                      <span className="absolute left-full ml-3 px-2.5 py-1 rounded-lg bg-[#222222] text-white text-xs font-medium whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-50 border border-[#383838] shadow-2xl">
                         {item.name}
                       </span>
                     )}

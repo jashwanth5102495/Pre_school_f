@@ -12,13 +12,16 @@ import {
   Users,
   GraduationCap,
   ShieldCheck,
-  CheckCircle2,
   Layers,
+  BarChart2,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 
 export const OrganizationTreePage: React.FC = () => {
   const { user } = useAuthStore();
   const [selectedSchoolId, setSelectedSchoolId] = useState<string | undefined>(undefined);
+  const [showStats, setShowStats] = useState(false);
 
   const {
     data,
@@ -30,35 +33,46 @@ export const OrganizationTreePage: React.FC = () => {
     queryFn: () => hierarchyService.getTree(selectedSchoolId),
   });
 
-  const school = data?.school;
-  const isSuperAdmin = user?.userType === 'PLATFORM';
-
   return (
-    <div className="space-y-6">
-      {/* Page Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-[#eb4438]/10 text-[#eb4438] flex items-center justify-center font-bold">
-              <Network className="w-4 h-4" />
-            </div>
-            <h1 className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">
+    <div className="w-full h-full flex flex-col overflow-hidden bg-[#141414]">
+      {/* ========================================================================= */}
+      {/* SLIM TOP HEADER (EXACTLY MATCHING ATTACHED REFERENCE IMAGE)               */}
+      {/* ========================================================================= */}
+      <div className="h-14 bg-[#1a1a1a] border-b border-[#2e2e2e] px-4 sm:px-6 flex items-center justify-between shrink-0 gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-[#eb4438]/15 text-[#eb4438] border border-[#eb4438]/30 flex items-center justify-center font-bold shrink-0">
+            <Network className="w-4 h-4" />
+          </div>
+          <div className="flex items-baseline gap-2 min-w-0">
+            <h1 className="text-sm font-bold tracking-tight text-white whitespace-nowrap">
               Institutional Hierarchy Tree
             </h1>
+            <span className="text-slate-600 hidden md:inline">|</span>
+            <p className="text-xs text-slate-400 truncate hidden md:inline">
+              Visual organization flowchart connecting Institutional Leadership, Academic, Director,
+              Finance, Faculty, and Students in live sync.
+            </p>
           </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Visual organization flowchart connecting Institutional Leadership, Academic Director,
-            Finance, Faculty, and Students in live sync.
-          </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={() => setShowStats((v) => !v)}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-[#383838] bg-[#222222] text-slate-300 hover:text-white hover:bg-[#2c2c2c] text-xs transition-colors cursor-pointer"
+            title="Toggle summary statistics"
+          >
+            <BarChart2 className="w-3.5 h-3.5 text-[#eb4438]" />
+            <span className="hidden sm:inline">Stats</span>
+            {showStats ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+          </button>
+
           <Button
             size="sm"
             variant="outline"
             onClick={() => refetch()}
             disabled={isFetching}
-            className="text-xs"
+            className="text-xs border-[#383838] bg-[#222222] text-slate-200 hover:text-white hover:bg-[#2c2c2c] h-8"
           >
             <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${isFetching ? 'animate-spin' : ''}`} />
             Sync Now
@@ -66,86 +80,91 @@ export const OrganizationTreePage: React.FC = () => {
         </div>
       </div>
 
-      {/* Overview Stat Badges */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 flex items-center justify-center shrink-0">
-            <School className="w-4 h-4" />
+      {/* Optional Collapsible Stats Drawer */}
+      {showStats && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 p-3 bg-[#181818] border-b border-[#2e2e2e] shrink-0 animate-in slide-in-from-top-2 duration-150">
+          <div className="p-2.5 rounded-xl border border-[#333333] bg-[#202020] flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-blue-950/60 text-blue-400 flex items-center justify-center shrink-0">
+              <School className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] text-slate-400 font-medium">Leadership</div>
+              <div className="text-xs font-bold text-white truncate">
+                {data?.principals?.length || 0} Principal
+              </div>
+            </div>
           </div>
-          <div>
-            <div className="text-[11px] text-slate-400 font-medium">Leadership</div>
-            <div className="text-sm font-bold text-slate-900 dark:text-white">
-              {data?.principals?.length || 0} Principal
+
+          <div className="p-2.5 rounded-xl border border-[#333333] bg-[#202020] flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-emerald-950/60 text-emerald-400 flex items-center justify-center shrink-0">
+              <GraduationCap className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] text-slate-400 font-medium">Academic & Finance</div>
+              <div className="text-xs font-bold text-white truncate">
+                {(data?.academics?.length || 0) + (data?.finances?.length || 0)} Directors
+              </div>
+            </div>
+          </div>
+
+          <div className="p-2.5 rounded-xl border border-[#333333] bg-[#202020] flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-cyan-950/60 text-cyan-400 flex items-center justify-center shrink-0">
+              <Layers className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] text-slate-400 font-medium">Classes</div>
+              <div className="text-xs font-bold text-white truncate">
+                {data?.classes?.length || 0} Classes
+              </div>
+            </div>
+          </div>
+
+          <div className="p-2.5 rounded-xl border border-[#333333] bg-[#202020] flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-rose-950/60 text-rose-400 flex items-center justify-center shrink-0">
+              <Users className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] text-slate-400 font-medium">Faculty</div>
+              <div className="text-xs font-bold text-white truncate">
+                {data?.teachers?.length || 0} Faculty
+              </div>
+            </div>
+          </div>
+
+          <div className="p-2.5 rounded-xl border border-[#333333] bg-[#202020] flex items-center gap-2.5 col-span-2 sm:col-span-1">
+            <div className="w-8 h-8 rounded-lg bg-indigo-950/60 text-indigo-400 flex items-center justify-center shrink-0">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] text-slate-400 font-medium">Students</div>
+              <div className="text-xs font-bold text-white truncate">
+                {data?.students?.length || 0} Students
+              </div>
             </div>
           </div>
         </div>
+      )}
 
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 flex items-center justify-center shrink-0">
-            <GraduationCap className="w-4 h-4" />
-          </div>
-          <div>
-            <div className="text-[11px] text-slate-400 font-medium">Academic & Finance</div>
-            <div className="text-sm font-bold text-slate-900 dark:text-white">
-              {(data?.academics?.length || 0) + (data?.finances?.length || 0)} Directors
+      {/* ========================================================================= */}
+      {/* EXPANSIVE FULLSCREEN VIEWPORT CANVAS (Fills 100% remaining screen space)  */}
+      {/* ========================================================================= */}
+      <div className="flex-1 w-full h-full min-h-0 relative overflow-hidden">
+        {isLoading ? (
+          <div className="w-full h-full p-8 space-y-4 bg-[#141414] flex flex-col items-center justify-center">
+            <div className="w-12 h-12 rounded-2xl bg-[#eb4438]/20 text-[#eb4438] flex items-center justify-center animate-pulse">
+              <Network className="w-6 h-6 animate-spin" />
             </div>
+            <p className="text-xs text-slate-400 font-medium">Loading institutional hierarchy map...</p>
           </div>
-        </div>
-
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-cyan-50 dark:bg-cyan-950/50 text-cyan-600 flex items-center justify-center shrink-0">
-            <Layers className="w-4 h-4" />
-          </div>
-          <div>
-            <div className="text-[11px] text-slate-400 font-medium">Classes & Batches</div>
-            <div className="text-sm font-bold text-slate-900 dark:text-white">
-              {data?.classes?.length || 0} Classes
-            </div>
-          </div>
-        </div>
-
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-rose-50 dark:bg-rose-950/50 text-rose-600 flex items-center justify-center shrink-0">
-            <Users className="w-4 h-4" />
-          </div>
-          <div>
-            <div className="text-[11px] text-slate-400 font-medium">Teaching Faculty</div>
-            <div className="text-sm font-bold text-slate-900 dark:text-white">
-              {data?.teachers?.length || 0} Faculty
-            </div>
-          </div>
-        </div>
-
-        <div className="p-3.5 rounded-xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] flex items-center gap-3 col-span-2 sm:col-span-1">
-          <div className="w-9 h-9 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 flex items-center justify-center shrink-0">
-            <ShieldCheck className="w-4 h-4" />
-          </div>
-          <div>
-            <div className="text-[11px] text-slate-400 font-medium">Enrolled Students</div>
-            <div className="text-sm font-bold text-slate-900 dark:text-white">
-              {data?.students?.length || 0} Students
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Graph Component (Expansive Full Canvas below overview badges) */}
-      {isLoading ? (
-        <div className="p-8 space-y-4 rounded-2xl border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#262626] h-[750px]">
-          <Skeleton className="h-14 w-full rounded-xl" />
-          <Skeleton className="h-64 w-full rounded-xl" />
-          <Skeleton className="h-32 w-full rounded-xl" />
-        </div>
-      ) : (
-        <div className="w-full h-full relative">
+        ) : (
           <HierarchyTreeGraph
             data={data}
             onRefresh={refetch}
             selectedSchoolId={selectedSchoolId}
             onSelectSchool={(id) => setSelectedSchoolId(id)}
           />
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
