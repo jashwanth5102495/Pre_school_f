@@ -5,11 +5,27 @@ const getApiBaseUrl = () => {
   const isRemoteHost =
     isBrowser && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
 
-  // 1. Runtime override via window or localStorage (allows user or deployed environment to point to live backend)
+  // 1. Runtime override via window, localStorage, or URL query param (?api=https://... or ?backend=https://...)
   if (isBrowser) {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const queryApi = urlParams.get('api') || urlParams.get('backend');
+      if (queryApi && queryApi.trim()) {
+        let clean = queryApi.trim().replace(/\/+$/, '');
+        if (!clean.endsWith('/api/v1') && !clean.endsWith('/api')) {
+          clean = `${clean}/api/v1`;
+        }
+        localStorage.setItem('custom_backend_url', clean);
+      }
+    } catch (_) {}
+
     const customUrl = localStorage.getItem('custom_backend_url') || (window as any).__API_BASE_URL__;
     if (customUrl && typeof customUrl === 'string' && customUrl.trim() !== '') {
-      return customUrl.trim().replace(/\/+$/, '');
+      let trimmed = customUrl.trim().replace(/\/+$/, '');
+      if (!trimmed.endsWith('/api/v1') && !trimmed.endsWith('/api')) {
+        trimmed = `${trimmed}/api/v1`;
+      }
+      return trimmed;
     }
   }
 
@@ -20,7 +36,11 @@ const getApiBaseUrl = () => {
   if (isRemoteHost) {
     // If an explicit remote URL was provided (starts with http/https and NOT localhost)
     if (envUrl && /^https?:\/\//i.test(envUrl) && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1') && !envUrl.includes('anvimerbackend')) {
-      return envUrl.replace(/\/+$/, '');
+      let trimmed = envUrl.replace(/\/+$/, '');
+      if (!trimmed.endsWith('/api/v1') && !trimmed.endsWith('/api')) {
+        trimmed = `${trimmed}/api/v1`;
+      }
+      return trimmed;
     }
 
     // If a relative path was provided (e.g. '/api/v1')

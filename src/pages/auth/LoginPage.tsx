@@ -130,6 +130,34 @@ export const LoginPage: React.FC = () => {
   });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isTestingBackend, setIsTestingBackend] = useState<boolean>(false);
+  const [testBackendResult, setTestBackendResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const handleTestBackendConnection = async (urlToTest: string) => {
+    let target = urlToTest.trim().replace(/\/+$/, '');
+    if (!target) return;
+    if (!target.startsWith('http://') && !target.startsWith('https://')) {
+      target = `https://${target}`;
+    }
+    const healthUrl = target.endsWith('/api/v1') ? `${target}/health` : `${target}/api/v1/health`;
+    setIsTestingBackend(true);
+    setTestBackendResult(null);
+    try {
+      const res = await fetch(healthUrl, { method: 'GET', signal: AbortSignal.timeout(10000) });
+      if (res.ok) {
+        setTestBackendResult({ success: true, message: 'Backend is online and reachable!' });
+      } else {
+        setTestBackendResult({ success: false, message: `Server responded with status HTTP ${res.status}` });
+      }
+    } catch (e: any) {
+      setTestBackendResult({
+        success: false,
+        message: `Cannot reach backend: ${e.message || 'Offline or connection refused'}`,
+      });
+    } finally {
+      setIsTestingBackend(false);
+    }
+  };
 
   // Automatic Looping Slideshow State for Left Visual Showcase (4.5s loop)
   const [isPaused, setIsPaused] = useState<boolean>(false);
@@ -267,9 +295,21 @@ export const LoginPage: React.FC = () => {
         err.message ||
         'Authentication failed. Please check your credentials.';
 
-      if (msg.includes('Network Error') || !err.response) {
+      const isStatus405 = err.response?.status === 405 || msg.includes('405');
+      const isStatus404 = (err.response?.status === 404 || msg.includes('404')) && !err.response?.data?.error;
+      const isNetworkFail = msg.includes('Network Error') || !err.response || err.code === 'ERR_NETWORK';
+
+      if (isStatus405) {
+        msg = `HTTP 405 (Method Not Allowed): The frontend is hosted on a static server (${window.location.hostname}) and cannot process API requests directly. Please connect your live backend server URL below.`;
+        setShowServerConfig(true);
+      } else if (isNetworkFail) {
         msg = `Cannot connect to backend server at ${API_BASE_URL}.`;
+        setShowServerConfig(true);
+      } else if (isStatus404) {
+        msg = `404 Not Found: Backend API endpoint ${API_BASE_URL} does not exist on this host.`;
+        setShowServerConfig(true);
       }
+
       setErrorMessage(msg);
       setIsLoading(false);
     }
@@ -558,53 +598,96 @@ export const LoginPage: React.FC = () => {
                 <Info className="w-4 h-4 shrink-0 mt-0.5" />
                 <span className="leading-snug">{errorMessage}</span>
               </div>
-              {(errorMessage.includes('Cannot connect') || errorMessage.includes('Network') || errorMessage.includes('target')) && (
-                <div className="pt-2 border-t border-red-200/60 dark:border-red-900/40 text-[11px] text-slate-600 dark:text-slate-300 flex items-center justify-between flex-wrap gap-2">
-                  <span>API: <code className="px-1.5 py-0.5 rounded bg-black/10 dark:bg-black/30 font-mono text-[10px]">{API_BASE_URL}</code></span>
-                  <button
-                    type="button"
-                    onClick={() => setShowServerConfig(!showServerConfig)}
-                    className="font-semibold text-[#eb4438] underline cursor-pointer hover:text-[#c9352a]"
-                  >
-                    {showServerConfig ? 'Close' : 'Set Backend URL'}
-                  </button>
-                </div>
-              )}
+              <div className="pt-2 border-t border-red-200/60 dark:border-red-900/40 text-[11px] text-slate-600 dark:text-slate-300 flex items-center justify-between flex-wrap gap-2">
+                <span>Attempted API: <code className="px-1.5 py-0.5 rounded bg-black/10 dark:bg-black/30 font-mono text-[10px]">{API_BASE_URL}</code></span>
+                <button
+                  type="button"
+                  onClick={() => setShowServerConfig(!showServerConfig)}
+                  className="font-semibold text-[#eb4438] underline cursor-pointer hover:text-[#c9352a]"
+                >
+                  {showServerConfig ? 'Hide Settings' : 'Configure Backend URL'}
+                </button>
+              </div>
             </div>
           )}
 
           {/* Quick inline backend configuration if cloud URL differs */}
           {showServerConfig && (
-            <div className="mb-4 p-3.5 rounded-2xl bg-slate-50 dark:bg-[#282828] border border-slate-200 dark:border-[#383838] space-y-2.5 text-xs animate-in fade-in">
+            <div className="mb-4 p-4 rounded-2xl bg-slate-50 dark:bg-[#282828] border border-slate-200 dark:border-[#383838] space-y-3 text-xs animate-in fade-in">
               <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white">
-                <span>Configure Live Backend API URL</span>
-                <button type="button" onClick={() => setShowServerConfig(false)} className="text-slate-400 hover:text-white">✕</button>
+                <span className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#eb4438] animate-pulse"></span>
+                  Connect Live Backend API
+                </span>
+                <button type="button" onClick={() => setShowServerConfig(false)} className="text-slate-400 hover:text-white cursor-pointer">✕</button>
               </div>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                If your backend is deployed on Railway or Render, enter its root API endpoint (e.g. <code>https://your-service.up.railway.app/api/v1</code>):
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                Enter your deployed backend server URL (from Railway, Render, or cloud VPS):
               </p>
-              <div className="flex items-center gap-2">
+              <div className="space-y-2">
                 <input
                   type="text"
                   value={customBackendUrl}
-                  onChange={(e) => setCustomBackendUrl(e.target.value)}
-                  placeholder="https://your-backend.up.railway.app/api/v1"
-                  className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-[#404040] bg-white dark:bg-[#1e1e1e] text-slate-900 dark:text-white text-xs font-mono"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (customBackendUrl.trim()) {
-                      localStorage.setItem('custom_backend_url', customBackendUrl.trim());
-                    } else {
-                      localStorage.removeItem('custom_backend_url');
-                    }
-                    window.location.reload();
+                  onChange={(e) => {
+                    setCustomBackendUrl(e.target.value);
+                    setTestBackendResult(null);
                   }}
-                  className="px-3 py-1.5 bg-[#eb4438] hover:bg-[#c9352a] text-white font-bold rounded-lg text-xs cursor-pointer shrink-0"
-                >
-                  Save & Reload
-                </button>
+                  placeholder="https://school-saas-backend.up.railway.app"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-[#404040] bg-white dark:bg-[#1e1e1e] text-slate-900 dark:text-white text-xs font-mono focus:outline-none focus:ring-1 focus:ring-[#eb4438]"
+                />
+
+                {testBackendResult && (
+                  <div
+                    className={`p-2 rounded-lg text-[11px] flex items-center gap-1.5 ${
+                      testBackendResult.success
+                        ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
+                        : 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800'
+                    }`}
+                  >
+                    {testBackendResult.success ? <Check className="w-3.5 h-3.5 shrink-0" /> : <Info className="w-3.5 h-3.5 shrink-0" />}
+                    <span>{testBackendResult.message}</span>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => handleTestBackendConnection(customBackendUrl)}
+                    disabled={isTestingBackend || !customBackendUrl.trim()}
+                    className="flex-1 py-1.5 px-3 rounded-lg border border-slate-300 dark:border-[#444] bg-white dark:bg-[#333] hover:bg-slate-100 dark:hover:bg-[#3a3a3a] text-slate-700 dark:text-slate-200 font-semibold text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50"
+                  >
+                    {isTestingBackend ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Testing...</span>
+                      </>
+                    ) : (
+                      <span>Test Connection</span>
+                    )}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (customBackendUrl.trim()) {
+                        let formatted = customBackendUrl.trim().replace(/\/+$/, '');
+                        if (!formatted.startsWith('http://') && !formatted.startsWith('https://')) {
+                          formatted = `https://${formatted}`;
+                        }
+                        if (!formatted.endsWith('/api/v1') && !formatted.endsWith('/api')) {
+                          formatted = `${formatted}/api/v1`;
+                        }
+                        localStorage.setItem('custom_backend_url', formatted);
+                      } else {
+                        localStorage.removeItem('custom_backend_url');
+                      }
+                      window.location.reload();
+                    }}
+                    className="flex-1 py-1.5 px-3 bg-[#eb4438] hover:bg-[#c9352a] text-white font-bold rounded-lg text-xs cursor-pointer text-center"
+                  >
+                    Save & Connect
+                  </button>
+                </div>
               </div>
             </div>
           )}
