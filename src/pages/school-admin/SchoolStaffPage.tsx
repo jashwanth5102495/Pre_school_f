@@ -66,8 +66,8 @@ export const SchoolStaffPage: React.FC = () => {
             Directory of teachers, administrators, and operational staff with teaching allocations
           </p>
         </div>
-        <Button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2">
-          <Plus className="w-4 h-4" /> Add Staff Member
+        <Button onClick={() => setIsModalOpen(true)} className="flex items-center gap-2 bg-[#eb4438] hover:bg-[#c9352a] text-white">
+          <Plus className="w-4 h-4" /> Add Teacher / Staff Member
         </Button>
       </div>
 

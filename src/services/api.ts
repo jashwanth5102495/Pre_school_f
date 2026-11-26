@@ -1,23 +1,53 @@
 import axios from 'axios';
 
 const getApiBaseUrl = () => {
-  const envUrl = import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL;
   const isBrowser = typeof window !== 'undefined';
   const isRemoteHost =
     isBrowser && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
 
-  // If running on a deployed domain (e.g. Vercel) and the env var is missing or pointing to localhost, fallback to Railway production backend
-  if (isRemoteHost && (!envUrl || envUrl.includes('localhost') || envUrl.includes('127.0.0.1'))) {
-    return 'https://anvimerbackend-production.up.railway.app/api/v1';
+  // 1. Runtime override via window or localStorage (allows user or deployed environment to point to live backend)
+  if (isBrowser) {
+    const customUrl = localStorage.getItem('custom_backend_url') || (window as any).__API_BASE_URL__;
+    if (customUrl && typeof customUrl === 'string' && customUrl.trim() !== '') {
+      return customUrl.trim().replace(/\/+$/, '');
+    }
   }
 
-  return envUrl || 'http://localhost:5000/api/v1';
+  // 2. Build-time environment variables
+  const envUrl = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim();
+
+  // If running in a remote / deployed environment (e.g. railway.app, vercel.app, render.com, custom domain)
+  if (isRemoteHost) {
+    // If an explicit remote URL was provided (starts with http/https and NOT localhost)
+    if (envUrl && /^https?:\/\//i.test(envUrl) && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1') && !envUrl.includes('anvimerbackend')) {
+      return envUrl.replace(/\/+$/, '');
+    }
+
+    // If a relative path was provided (e.g. '/api/v1')
+    if (envUrl && envUrl.startsWith('/')) {
+      return `${window.location.origin}${envUrl.replace(/\/+$/, '')}`;
+    }
+
+    // Default for remote host: always use current origin's /api/v1 (NEVER localhost!)
+    return `${window.location.origin}/api/v1`;
+  }
+
+  // 3. Localhost development environment
+  if (envUrl && !envUrl.includes('anvimerbackend')) {
+    if (envUrl.startsWith('/')) {
+      return isBrowser ? `${window.location.origin}${envUrl}` : 'http://localhost:5000/api/v1';
+    }
+    return envUrl.replace(/\/+$/, '');
+  }
+
+  return 'http://localhost:5000/api/v1';
 };
 
 export const API_BASE_URL = getApiBaseUrl();
 
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 45000, // 45s timeout to gracefully tolerate cloud server cold starts (Render/Railway)
   headers: {
     'Content-Type': 'application/json',
   },
@@ -53,6 +83,22 @@ apiClient.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
+    if (!originalRequest) return Promise.reject(error);
+
+    // Auto-retry once on cold-start wakeups (502, 503, 504, or Network Error / Timeout)
+    const isNetworkOrColdStart =
+      !error.response ||
+      error.code === 'ECONNABORTED' ||
+      error.message?.includes('Network Error') ||
+      error.message?.includes('timeout') ||
+      [502, 503, 504].includes(error.response?.status);
+
+    if (isNetworkOrColdStart && !originalRequest._networkRetry) {
+      originalRequest._networkRetry = true;
+      // Wait 2 seconds for cloud server instance to finish waking up
+      await new Promise((r) => setTimeout(r, 2000));
+      return apiClient(originalRequest);
+    }
 
     if (
       error.response?.status === 401 &&

@@ -17,7 +17,7 @@ import {
   Check,
   Info,
 } from 'lucide-react';
-import apiClient from '../../services/api';
+import { apiClient, API_BASE_URL } from '../../services/api';
 import { useAuthStore } from '../../store/auth.store';
 import { ThemeToggle } from '../../components/ui/ThemeToggle';
 
@@ -123,6 +123,11 @@ export const LoginPage: React.FC = () => {
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [rememberMe, setRememberMe] = useState<boolean>(true);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isWarmingUp, setIsWarmingUp] = useState<boolean>(false);
+  const [showServerConfig, setShowServerConfig] = useState<boolean>(false);
+  const [customBackendUrl, setCustomBackendUrl] = useState<string>(() => {
+    return localStorage.getItem('custom_backend_url') || '';
+  });
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -230,8 +235,13 @@ export const LoginPage: React.FC = () => {
     }
 
     setIsLoading(true);
+    setIsWarmingUp(false);
     setErrorMessage(null);
     setSuccessMessage(null);
+
+    const warmTimer = setTimeout(() => {
+      setIsWarmingUp(true);
+    }, 2500);
 
     try {
       const res = await apiClient.post('/auth/login', {
@@ -239,6 +249,8 @@ export const LoginPage: React.FC = () => {
         password,
       });
 
+      clearTimeout(warmTimer);
+      setIsWarmingUp(false);
       const { user, accessToken, refreshToken } = res.data.data;
       setAuth(user, accessToken, refreshToken);
       setSuccessMessage(`Welcome back, ${user.fullName || user.role}!`);
@@ -247,11 +259,17 @@ export const LoginPage: React.FC = () => {
         redirectByRole(user);
       }, 700);
     } catch (err: any) {
-      const msg =
+      clearTimeout(warmTimer);
+      setIsWarmingUp(false);
+      let msg =
         err.response?.data?.error?.message ||
         err.response?.data?.message ||
         err.message ||
         'Authentication failed. Please check your credentials.';
+
+      if (msg.includes('Network Error') || !err.response) {
+        msg = `Cannot connect to backend server at ${API_BASE_URL}.`;
+      }
       setErrorMessage(msg);
       setIsLoading(false);
     }
@@ -527,12 +545,70 @@ export const LoginPage: React.FC = () => {
           </div>
 
           {/* Feedback messages */}
-          {errorMessage && (
-            <div className="mb-4 p-3.5 rounded-2xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-600 dark:text-red-400 text-xs flex items-start gap-2.5 animate-in fade-in">
-              <Info className="w-4 h-4 shrink-0 mt-0.5" />
-              <span className="leading-snug">{errorMessage}</span>
+          {isWarmingUp && (
+            <div className="mb-4 p-3 rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 text-amber-700 dark:text-amber-400 text-xs flex items-center gap-2.5 animate-in fade-in">
+              <Loader2 className="w-4 h-4 animate-spin shrink-0 text-amber-600 dark:text-amber-400" />
+              <span>Connecting to backend server... (waking free-tier cloud instance, please hold on)</span>
             </div>
           )}
+
+          {errorMessage && (
+            <div className="mb-4 p-3.5 rounded-2xl bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900/60 text-red-600 dark:text-red-400 text-xs space-y-2 animate-in fade-in">
+              <div className="flex items-start gap-2.5">
+                <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                <span className="leading-snug">{errorMessage}</span>
+              </div>
+              {(errorMessage.includes('Cannot connect') || errorMessage.includes('Network') || errorMessage.includes('target')) && (
+                <div className="pt-2 border-t border-red-200/60 dark:border-red-900/40 text-[11px] text-slate-600 dark:text-slate-300 flex items-center justify-between flex-wrap gap-2">
+                  <span>API: <code className="px-1.5 py-0.5 rounded bg-black/10 dark:bg-black/30 font-mono text-[10px]">{API_BASE_URL}</code></span>
+                  <button
+                    type="button"
+                    onClick={() => setShowServerConfig(!showServerConfig)}
+                    className="font-semibold text-[#eb4438] underline cursor-pointer hover:text-[#c9352a]"
+                  >
+                    {showServerConfig ? 'Close' : 'Set Backend URL'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Quick inline backend configuration if cloud URL differs */}
+          {showServerConfig && (
+            <div className="mb-4 p-3.5 rounded-2xl bg-slate-50 dark:bg-[#282828] border border-slate-200 dark:border-[#383838] space-y-2.5 text-xs animate-in fade-in">
+              <div className="flex items-center justify-between font-bold text-slate-900 dark:text-white">
+                <span>Configure Live Backend API URL</span>
+                <button type="button" onClick={() => setShowServerConfig(false)} className="text-slate-400 hover:text-white">✕</button>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                If your backend is deployed on Railway or Render, enter its root API endpoint (e.g. <code>https://your-service.up.railway.app/api/v1</code>):
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={customBackendUrl}
+                  onChange={(e) => setCustomBackendUrl(e.target.value)}
+                  placeholder="https://your-backend.up.railway.app/api/v1"
+                  className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-[#404040] bg-white dark:bg-[#1e1e1e] text-slate-900 dark:text-white text-xs font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (customBackendUrl.trim()) {
+                      localStorage.setItem('custom_backend_url', customBackendUrl.trim());
+                    } else {
+                      localStorage.removeItem('custom_backend_url');
+                    }
+                    window.location.reload();
+                  }}
+                  className="px-3 py-1.5 bg-[#eb4438] hover:bg-[#c9352a] text-white font-bold rounded-lg text-xs cursor-pointer shrink-0"
+                >
+                  Save & Reload
+                </button>
+              </div>
+            </div>
+          )}
+
           {successMessage && (
             <div className="mb-4 p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-emerald-700 dark:text-emerald-400 text-xs flex items-center gap-2.5 animate-in fade-in">
               <Check className="w-4 h-4 shrink-0 text-emerald-600" />

@@ -17,6 +17,7 @@ import {
   Layers,
   BookOpen,
   Users,
+  GraduationCap,
 } from 'lucide-react';
 import { cn } from '../utils/cn';
 
@@ -46,10 +47,11 @@ export const OfficeAdminLayout: React.FC = () => {
   const navItems = [
     { label: 'Office Dashboard', path: '/office-admin/dashboard', icon: LayoutDashboard },
     { label: 'Hierarchy Tree', path: '/office-admin/tree', icon: Network },
-    { label: 'Teaching Faculty', path: '/office-admin/staff', icon: Users },
-    { label: 'Admissions Workflow', path: '/office-admin/admissions', icon: UserPlus },
     { label: 'Classes & Sections', path: '/office-admin/classes', icon: Layers },
+    { label: 'Teaching Faculty', path: '/office-admin/staff', icon: Users },
     { label: 'Faculty Allocations', path: '/office-admin/allocations', icon: BookOpen },
+    { label: 'Students Roster', path: '/office-admin/students', icon: GraduationCap },
+    { label: 'Admissions Workflow', path: '/office-admin/admissions', icon: UserPlus },
     { label: 'Fee Collection', path: '/office-admin/fees', icon: CreditCard },
     { label: 'Fee Structures', path: '/office-admin/fee-structures', icon: FileSpreadsheet },
     { label: 'Student Documents', path: '/office-admin/documents', icon: Files },

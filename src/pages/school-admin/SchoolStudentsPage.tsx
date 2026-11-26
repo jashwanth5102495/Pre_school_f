@@ -339,14 +339,22 @@ export const SchoolStudentsPage: React.FC = () => {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <label className="block text-slate-700 font-medium mb-1">Class</label>
+                <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">Class</label>
                 <select
                   required
                   value={formData.classId}
-                  onChange={(e) => setFormData({ ...formData, classId: e.target.value })}
-                  className="w-full p-2 rounded-lg border border-slate-200 text-xs focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => {
+                    const newClassId = e.target.value;
+                    const c = classes?.find((cls: any) => cls.id === newClassId);
+                    setFormData({
+                      ...formData,
+                      classId: newClassId,
+                      sectionId: c?.sections?.[0]?.id || '',
+                    });
+                  }}
+                  className="w-full p-2 rounded-lg border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#202020] text-xs focus:ring-2 focus:ring-[#eb4438]"
                 >
                   <option value="">Select Class</option>
                   {classes?.map((c: any) => (
@@ -356,11 +364,24 @@ export const SchoolStudentsPage: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-slate-700 font-medium mb-1">Gender</label>
+                <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">Section</label>
+                <select
+                  value={formData.sectionId}
+                  onChange={(e) => setFormData({ ...formData, sectionId: e.target.value })}
+                  className="w-full p-2 rounded-lg border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#202020] text-xs focus:ring-2 focus:ring-[#eb4438]"
+                >
+                  {classes?.find((c: any) => c.id === formData.classId)?.sections?.map((s: any) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  )) || <option value="">Default (Section A)</option>}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-medium mb-1">Gender</label>
                 <select
                   value={formData.gender}
                   onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
-                  className="w-full p-2 rounded-lg border border-slate-200 text-xs"
+                  className="w-full p-2 rounded-lg border border-slate-200 dark:border-[#383838] bg-white dark:bg-[#202020] text-xs"
                 >
                   <option value="MALE">Male</option>
                   <option value="FEMALE">Female</option>

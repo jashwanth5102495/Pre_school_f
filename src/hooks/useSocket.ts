@@ -3,17 +3,29 @@ import { io, Socket } from 'socket.io-client';
 import { useAuthStore } from '../store/auth.store';
 
 const getSocketUrl = () => {
-  const envUrl = import.meta.env.VITE_SOCKET_URL;
   const isBrowser = typeof window !== 'undefined';
   const isRemoteHost =
     isBrowser && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
 
-  if (isRemoteHost && (!envUrl || envUrl.includes('localhost') || envUrl.includes('127.0.0.1'))) {
-    return 'https://anvimerbackend-production.up.railway.app';
+  if (isBrowser) {
+    const customUrl = localStorage.getItem('custom_backend_url');
+    if (customUrl) return customUrl.replace('/api/v1', '').replace(/\/+$/, '');
+  }
+
+  const envUrl = (import.meta.env.VITE_SOCKET_URL || '').trim();
+
+  if (isRemoteHost) {
+    if (envUrl && /^https?:\/\//i.test(envUrl) && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1') && !envUrl.includes('anvimerbackend')) {
+      return envUrl.replace(/\/+$/, '');
+    }
+    return window.location.origin;
+  }
+
+  if (envUrl && !envUrl.includes('anvimerbackend')) {
+    return envUrl;
   }
 
   return (
-    envUrl ||
     import.meta.env.VITE_API_BASE_URL?.replace('/api/v1', '') ||
     import.meta.env.VITE_API_URL?.replace('/api/v1', '') ||
     'http://localhost:5000'
